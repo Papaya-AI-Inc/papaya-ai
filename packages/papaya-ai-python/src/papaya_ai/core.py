@@ -159,6 +159,34 @@ def _error_payload(error: BaseException | Any) -> dict[str, str]:
     return {"message": str(error)}
 
 
+# Papaya-owned control bag. Mirrors `controlBag` in packages/papaya-ai/src/index.ts.
+# The customer supplies values only through the single `applied_recommendations`
+# option, so they can never inject arbitrary keys into the bag.
+APPLIED_RECOMMENDATION_WINDOW = 25
+
+# Deliberately looser than the exact minted id shape, so a future change to id
+# minting cannot invalidate markers already deployed in customer configs.
+# `\Z` (not `$`) mirrors the JavaScript `$`, which never matches before a trailing newline.
+_MARKER_PATTERN = re.compile(r"^agfind-[A-Za-z0-9_-]{1,56}\Z")
+
+
+def _control_bag(applied: list[str] | None) -> dict[str, Any] | None:
+    """Build the batch-level `papaya` control bag, or None when there is nothing to send.
+
+    Pure function of the input list, so an unchanged customer config produces a
+    byte-identical bag on every flush.
+    """
+    if not isinstance(applied, (list, tuple)) or not applied:
+        return None
+    valid = [marker for marker in applied if isinstance(marker, str) and _MARKER_PATTERN.match(marker)]
+    # Deduplicate keeping the LAST occurrence, so re-adding a marker moves it to the
+    # newest position instead of pinning it to its first slot. dict.fromkeys keeps the
+    # FIRST occurrence, so reverse going in and reverse coming back out.
+    ordered = list(reversed(list(dict.fromkeys(reversed(valid)))))
+    window = ordered[-APPLIED_RECOMMENDATION_WINDOW:]
+    return {"appliedRecommendations": window} if window else None
+
+
 def _merge_options(*option_sets: dict[str, Any] | None) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for options in option_sets:
@@ -409,6 +437,7 @@ class Papaya:
         capture: CaptureMode = "redacted",
         service_name: str | None = None,
         service_version: str | None = None,
+        applied_recommendations: list[str] | None = None,
         max_batch_bytes: int = 512 * 1024,
         debug: bool = False,
         transport: Transport | None = None,
@@ -421,6 +450,9 @@ class Papaya:
         self.capture = capture
         self.service_name = service_name
         self.service_version = service_version
+        # Papaya-owned, not customer content: kept off default_run_options on purpose so it
+        # never leaks into per-run options or trace metadata.
+        self.applied_recommendations = applied_recommendations
         self.max_batch_bytes = max_batch_bytes if max_batch_bytes > 0 else 512 * 1024
         self.debug = debug
         self.transport = transport or _default_transport
@@ -698,6 +730,9 @@ class Papaya:
             span["error"] = _error_payload(error)
 
     def _new_pending_batch(self, traces: list[dict[str, Any]]) -> dict[str, Any]:
+        # Built here, at flush time, so every split batch carries the bag and the bag
+        # tracks the current config rather than a snapshot taken at construction.
+        papaya = _control_bag(self.applied_recommendations)
         batch = {
             "schemaVersion": "2026-06-05",
             "batchId": _id("batch"),
@@ -713,6 +748,9 @@ class Papaya:
                 "serviceVersion": self.service_version,
                 "environment": self.environment,
             },
+            # Omitted entirely when there is nothing to send: never `"papaya": null`,
+            # never an empty object, never an empty array.
+            **({"papaya": papaya} if papaya else {}),
             "traces": traces,
         }
         return {"batch": batch, "body": _json_bytes(batch)}

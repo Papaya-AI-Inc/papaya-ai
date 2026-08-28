@@ -1,0 +1,89 @@
+{
+  "comment": "Shared contract for the Papaya-owned adoption-marker control bag. BOTH SDKs read this file and must produce identical output for every case, because a divergence would silently drop customer markers on one runtime only. The Python suite reads it across packages on purpose: one fixture, two consumers. `expected` is the value of the `papaya` bag, or null when the key must be omitted entirely.",
+  "window": 25,
+  "cases": [
+    {
+      "name": "empty list sends no bag",
+      "input": [],
+      "expected": null
+    },
+    {
+      "name": "single marker",
+      "input": ["agfind-1756089600000-aaaaaaaa"],
+      "expected": { "appliedRecommendations": ["agfind-1756089600000-aaaaaaaa"] }
+    },
+    {
+      "name": "customer order is preserved because newest is last",
+      "input": [
+        "agfind-1756089600000-aaaaaaaa",
+        "agfind-1756089600001-bbbbbbbb",
+        "agfind-1756089600002-cccccccc"
+      ],
+      "expected": {
+        "appliedRecommendations": [
+          "agfind-1756089600000-aaaaaaaa",
+          "agfind-1756089600001-bbbbbbbb",
+          "agfind-1756089600002-cccccccc"
+        ]
+      }
+    },
+    {
+      "name": "dedupe keeps the LAST occurrence so re-adding moves a marker to the newest position",
+      "input": [
+        "agfind-1756089600000-aaaaaaaa",
+        "agfind-1756089600001-bbbbbbbb",
+        "agfind-1756089600000-aaaaaaaa"
+      ],
+      "expected": {
+        "appliedRecommendations": [
+          "agfind-1756089600001-bbbbbbbb",
+          "agfind-1756089600000-aaaaaaaa"
+        ]
+      }
+    },
+    {
+      "name": "dedupe across several repeats",
+      "input": [
+        "agfind-1-aaaa",
+        "agfind-2-bbbb",
+        "agfind-1-aaaa",
+        "agfind-3-cccc",
+        "agfind-2-bbbb"
+      ],
+      "expected": {
+        "appliedRecommendations": ["agfind-1-aaaa", "agfind-3-cccc", "agfind-2-bbbb"]
+      }
+    },
+    {
+      "name": "non-marker entries are dropped",
+      "input": [
+        "not-a-marker",
+        "agfind-1756089600000-aaaaaaaa",
+        "",
+        "agfind-",
+        "sk_test_abcdefghijkl"
+      ],
+      "expected": { "appliedRecommendations": ["agfind-1756089600000-aaaaaaaa"] }
+    },
+    {
+      "name": "a list of only junk sends no bag",
+      "input": ["nope", "papaya_rec_abcdefghijkl", "12345"],
+      "expected": null
+    },
+    {
+      "name": "a trailing newline is rejected, not trimmed",
+      "input": ["agfind-1756089600000-aaaaaaaa\n"],
+      "expected": null
+    },
+    {
+      "name": "an over-long value is rejected",
+      "input": ["agfind-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      "expected": null
+    },
+    {
+      "name": "underscores and dashes are valid inside a marker",
+      "input": ["agfind-abc_DEF-123"],
+      "expected": { "appliedRecommendations": ["agfind-abc_DEF-123"] }
+    }
+  ]
+}

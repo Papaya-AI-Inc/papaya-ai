@@ -107,10 +107,10 @@ try {
   });
   assert.equal(captured[0]?.url, "https://papaya.example/api/v1/ingest/traces");
   assert.equal((captured[0]?.init?.headers as Record<string, string>).Authorization, "Bearer papaya-test-token");
-  assert.equal((captured[0]?.init?.headers as Record<string, string>)["User-Agent"], "@papaya-ai/tracing/0.1.3");
+  assert.equal((captured[0]?.init?.headers as Record<string, string>)["User-Agent"], "@papaya-ai/tracing/0.1.4");
   assert.deepEqual(captured[0]?.body.sdk, {
     name: "@papaya-ai/tracing",
-    version: "0.1.3",
+    version: "0.1.4",
     language: "typescript",
     runtime: `node/${process.version}`,
   });

@@ -13,6 +13,13 @@ export type PapayaOptions = RunOptions & {
   capture?: CaptureMode;
   serviceName?: string;
   serviceVersion?: string;
+  /**
+   * Papaya recommendation ids (`agfind-...`) your application config declares as applied.
+   * Papaya owns this channel: it never becomes trace metadata and is never redacted, so put
+   * nothing but recommendation ids here. The SDK sends only the newest
+   * `APPLIED_RECOMMENDATION_WINDOW` entries of the list.
+   */
+  appliedRecommendations?: string[];
   maxBatchBytes?: number;
   debug?: boolean;
 };
@@ -160,6 +167,8 @@ type TraceBatch = {
     serviceVersion?: string;
     environment?: string;
   };
+  /** Papaya-owned control bag. Never customer content, so never redacted. Omitted when empty. */
+  papaya?: { appliedRecommendations: string[] };
   traces: Array<ActiveRun & { rootSpanId: string }>;
 };
 
@@ -168,8 +177,41 @@ type PendingBatch = {
   body: string;
 };
 
-const SDK_VERSION = "0.1.3";
+const SDK_VERSION = "0.1.4";
 const DEFAULT_MAX_BATCH_BYTES = 512 * 1024;
+
+/**
+ * How many applied-recommendation markers a batch carries. The customer config list grows for the
+ * life of the application; the wire payload must not. Kept identical in the Python SDK.
+ */
+export const APPLIED_RECOMMENDATION_WINDOW = 25;
+
+/**
+ * Deliberately looser than the exact `findings.id` shape, so a future change to the id minter
+ * cannot invalidate markers already written into customer configs.
+ */
+const MARKER_PATTERN = /^agfind-[A-Za-z0-9_-]{1,56}$/;
+
+const isMarker = (value: unknown): value is string =>
+  typeof value === "string" && MARKER_PATTERN.test(value);
+
+/**
+ * Builds the Papaya-owned control bag for one batch. Pure function of `applied`, so an unchanged
+ * customer config yields a byte-identical bag on every flush. Exported for tests.
+ *
+ * Returns `undefined` — meaning the `papaya` key is omitted entirely — when there is nothing to
+ * send. An empty object or empty array is never emitted.
+ */
+export const buildPapayaControlBag = (applied?: string[]): { appliedRecommendations: string[] } | undefined => {
+  if (!Array.isArray(applied) || applied.length === 0) return undefined;
+  // Dedupe keeping the LAST occurrence, so re-adding a marker moves it to the newest position
+  // rather than pinning it to its first slot: reverse, dedupe (Set keeps the first hit it sees),
+  // then reverse back into the customer's own order.
+  const ordered = [...new Set(applied.filter(isMarker).reverse())].reverse();
+  // The coding agent appends, so the newest markers are the tail.
+  const newest = ordered.slice(-APPLIED_RECOMMENDATION_WINDOW);
+  return newest.length > 0 ? { appliedRecommendations: newest } : undefined;
+};
 
 const storage = new AsyncLocalStorage<ActiveRun>();
 
@@ -503,6 +545,9 @@ export class Papaya {
       environment,
       serviceName,
       serviceVersion,
+      // Must be destructured explicitly: anything left over falls into runDefaults and would
+      // become per-run metadata, which is customer content and gets redacted server-side.
+      appliedRecommendations,
       maxBatchBytes,
       debug,
       ...runDefaults
@@ -515,6 +560,7 @@ export class Papaya {
       environment: environment ?? "development",
       serviceName,
       serviceVersion,
+      appliedRecommendations,
       maxBatchBytes: typeof maxBatchBytes === "number" && maxBatchBytes > 0
         ? Math.trunc(maxBatchBytes)
         : DEFAULT_MAX_BATCH_BYTES,
@@ -627,6 +673,9 @@ export class Papaya {
   }
 
   private newBatch(traces: ActiveRun[]): PendingBatch {
+    // Built here, at batch time, rather than at construction: every split batch goes through this
+    // builder, so this is what guarantees each one carries the bag.
+    const papaya = buildPapayaControlBag(this.options.appliedRecommendations);
     const batch: TraceBatch = {
       schemaVersion: "2026-06-05",
       batchId: id("batch"),
@@ -642,6 +691,7 @@ export class Papaya {
         serviceVersion: this.options.serviceVersion,
         environment: this.options.environment,
       },
+      ...(papaya ? { papaya } : {}),
       traces,
     };
     return { batch, body: JSON.stringify(batch) };

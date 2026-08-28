@@ -371,6 +371,26 @@ const papaya = Papaya.init({
 
 `apiKey` defaults to `PAPAYA_API_KEY` and then `PAPAYA_INGEST_TOKEN`. `endpoint` defaults to `https://papaya.fyi/api/v1/ingest/traces`.
 
+## Applied Recommendations
+
+Every Papaya recommendation has an id of the form `agfind-<digits>-<hex>`. When your coding agent implements a recommendation, it appends that id to a list in your application config. Pass the list to `Papaya.init` and Papaya marks the recommendation as implemented.
+
+```ts
+const papaya = Papaya.init({
+  apiKey: process.env.PAPAYA_API_KEY,
+  appliedRecommendations: config.papaya.appliedRecommendations,
+});
+```
+
+The list is append-only on your side. The SDK does the pruning.
+
+- **Papaya owns this channel.** `appliedRecommendations` is the only way to put anything into it. It is a plain list of recommendation ids; there is no way to add other keys or values.
+- **It carries no customer content, so it is not redacted.** It travels beside your traces, not inside them: it never becomes trace metadata, and never passes through local or server-side redaction. Put nothing but recommendation ids here.
+- **Only the newest 25 are sent.** The SDK takes the tail of your list, keeps your order, drops entries that do not look like recommendation ids, and deduplicates keeping the newest position. Your config list can grow forever; the payload stays about the same size.
+- **Nothing is sent when there is nothing to send.** If the list is unset, empty, or every entry was dropped, the SDK omits the field entirely.
+
+The window size is exported as `APPLIED_RECOMMENDATION_WINDOW`.
+
 ## Safety Defaults
 
 - Capture defaults to `redacted`.
@@ -379,6 +399,7 @@ const papaya = Papaya.init({
 - SDK errors are swallowed unless `debug: true` is enabled.
 - Provider calls are awaited normally; Papaya export happens on `flush()`.
 - Papaya-only call metadata is stripped before provider SDK and REST calls.
+- `appliedRecommendations` is the only input to the Papaya control bag, and it never becomes trace metadata.
 - Streaming fetch responses are returned without reading the response body.
 - The hosted ingest API enforces capture policy again before raw landing.
 
