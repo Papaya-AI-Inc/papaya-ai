@@ -7,10 +7,10 @@
   "homepage": "https://papaya.fyi",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Nile-AI-Inc/papaya-ai.git"
+    "url": "git+https://github.com/Papaya-AI-Inc/papaya-ai.git"
   },
   "bugs": {
-    "url": "https://github.com/Nile-AI-Inc/papaya-ai/issues"
+    "url": "https://github.com/Papaya-AI-Inc/papaya-ai/issues"
   },
   "keywords": [
     "ai",

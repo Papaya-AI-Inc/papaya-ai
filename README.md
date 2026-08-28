@@ -23,7 +23,7 @@ Add the @papaya-ai/tracing SDK to my existing project so my LLM calls show up as
 traces in Papaya. Keep the changes minimal. Do not refactor anything else.
 If adding Papaya would replace an existing observability or tracing wrapper,
 stop and confirm with me first; otherwise prefer composing Papaya alongside it.
-Reference: https://github.com/Nile-AI-Inc/papaya-ai
+Reference: https://github.com/Papaya-AI-Inc/papaya-ai
 
 1. Install:
    npm i @papaya-ai/tracing
