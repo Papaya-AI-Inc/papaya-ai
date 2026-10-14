@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "targetSchema": "papaya.normalized-trace.v1",
+  "hitl": {
+    "from": "/metadata/request_id",
+    "cardinality": "scalar"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "targetSchema": "papaya.normalized-trace.v1",
+  "hitl": {
+    "from": "/metadata/approval_events",
+    "cardinality": "many",
+    "fields": [
+      { "from": "/phase", "to": "/phase" },
+      { "from": "/approval_request_id", "to": "/correlationId" },
+      { "from": "/span_id", "to": "/spanId" },
+      { "from": "/at", "to": "/occurredAt" }
+    ]
+  }
+}

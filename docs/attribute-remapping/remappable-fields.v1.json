@@ -1,0 +1,163 @@
+{
+  "status": "versioned-contract",
+  "version": "1.0",
+  "fieldCount": 26,
+  "fields": [
+    {
+      "scope": "trace",
+      "destination": "/sessionId",
+      "type": "string",
+      "description": "Session identifier; exact value, no trimming."
+    },
+    {
+      "scope": "trace",
+      "destination": "/conversationId",
+      "type": "string",
+      "description": "Conversation identifier; not an automatic HITL thread alias."
+    },
+    {
+      "scope": "trace",
+      "destination": "/userId",
+      "type": "string",
+      "description": "Customer user identifier; capture policy still applies."
+    },
+    {
+      "scope": "trace",
+      "destination": "/organizationId",
+      "type": "string",
+      "description": "Customer organization label; cannot change authenticated tenancy."
+    },
+    {
+      "scope": "trace",
+      "destination": "/workflowKey",
+      "type": "string",
+      "description": "Sender workflow identity; must remain stable across the approval pair."
+    },
+    {
+      "scope": "trace",
+      "destination": "/workflowLabel",
+      "type": "string",
+      "description": "Sender display label; does not override classified workflow assignment."
+    },
+    {
+      "scope": "trace",
+      "destination": "/conversational",
+      "type": "boolean",
+      "description": "Whether the trace represents conversational activity."
+    },
+    {
+      "scope": "trace",
+      "destination": "/group/name",
+      "type": "group-name",
+      "description": "One grouping dimension; lower-case name, 1–64 characters."
+    },
+    {
+      "scope": "trace",
+      "destination": "/group/value",
+      "type": "group-value",
+      "description": "One grouping value; 1–512 UTF-8 bytes."
+    },
+    {
+      "scope": "trace",
+      "destination": "/metadata/thread_id",
+      "type": "identifier",
+      "description": "HITL thread identity. All span thread aliases must agree."
+    },
+    {
+      "scope": "span",
+      "destination": "/modelRef/provider",
+      "type": "string",
+      "description": "Observed provider name."
+    },
+    {
+      "scope": "span",
+      "destination": "/modelRef/requested",
+      "type": "string",
+      "description": "Requested model identifier."
+    },
+    {
+      "scope": "span",
+      "destination": "/modelRef/used",
+      "type": "string",
+      "description": "Observed model identifier."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/inputTokens",
+      "type": "token-count",
+      "description": "Measured input tokens; never a configured token limit."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/outputTokens",
+      "type": "token-count",
+      "description": "Measured output tokens."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/totalTokens",
+      "type": "token-count",
+      "description": "Measured total tokens; source counting semantics retained."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/cacheReadInputTokens",
+      "type": "token-count",
+      "description": "Measured cache-read input tokens."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/cacheCreationInputTokens",
+      "type": "token-count",
+      "description": "Measured cache-write input tokens."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/reasoningTokens",
+      "type": "token-count",
+      "description": "Measured reasoning tokens; do not add twice to output tokens."
+    },
+    {
+      "scope": "span",
+      "destination": "/usage/costUsd",
+      "type": "cost",
+      "description": "Observed USD cost only; derived provenance is customer / observed."
+    },
+    {
+      "scope": "span",
+      "destination": "/tool/name",
+      "type": "string",
+      "description": "Tool name on an already existing kind=tool span; creates no execution."
+    },
+    {
+      "scope": "hitl_event",
+      "destination": "/phase",
+      "type": "phase",
+      "description": "pause or resume, case-sensitive."
+    },
+    {
+      "scope": "hitl_event",
+      "destination": "/correlationId",
+      "type": "identifier",
+      "description": "Per-approval application identity, stable across its pair and retries."
+    },
+    {
+      "scope": "hitl_event",
+      "destination": "/spanId",
+      "type": "identifier",
+      "description": "Reference to an existing span in this same physical trace."
+    },
+    {
+      "scope": "hitl_event",
+      "destination": "/occurredAt",
+      "type": "timestamp",
+      "description": "Observed UTC instant for this boundary, within its span interval."
+    },
+    {
+      "scope": "hitl_event",
+      "destination": "/nativeInterruptId",
+      "type": "identifier",
+      "description": "Optional original framework ID, retained for diagnostics."
+    }
+  ]
+}

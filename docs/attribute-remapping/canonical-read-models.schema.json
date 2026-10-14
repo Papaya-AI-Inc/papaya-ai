@@ -1,0 +1,978 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:papaya:canonical-read-models:2026-09-30",
+  "title": "Current canonical API read models — documentation snapshot",
+  "description": "Read-only API model definitions, not remapping destinations or a promise of full runtime validation. Database-private columns and raw source ledgers are not part of this public contract.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/CanonicalTrace"
+    },
+    {
+      "$ref": "#/$defs/CanonicalTraceSegment"
+    },
+    {
+      "$ref": "#/$defs/CanonicalMessage"
+    },
+    {
+      "$ref": "#/$defs/CanonicalOperation"
+    },
+    {
+      "$ref": "#/$defs/CanonicalArtifact"
+    },
+    {
+      "$ref": "#/$defs/ModelUsage"
+    }
+  ],
+  "$defs": {
+    "CanonicalTrace": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "importId",
+        "sourceRef"
+      ],
+      "properties": {
+        "intentId": {
+          "type": "string"
+        },
+        "workflowName": {
+          "type": "string"
+        },
+        "lastClassification": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "traceDay": {
+          "type": "string",
+          "format": "date",
+          "description": "UTC day copied to every trace-owned canonical row for PostgreSQL partition routing."
+        },
+        "importId": {
+          "type": "string"
+        },
+        "app": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "groupName": {
+          "type": "string"
+        },
+        "groupValue": {
+          "type": "string"
+        },
+        "sourceRef": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CanonicalStatus"
+            }
+          ],
+          "description": "Primary outcome: validated semantic result, otherwise execution evidence."
+        },
+        "outcomeDetails": {
+          "$ref": "#/$defs/TraceOutcomeDetails"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "latencyMs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "inputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reasoningTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "costUsd": {
+          "type": "number",
+          "format": "double"
+        },
+        "pricingSource": {
+          "$ref": "#/$defs/PricingSource"
+        },
+        "costKind": {
+          "$ref": "#/$defs/CostKind"
+        },
+        "costCoverage": {
+          "$ref": "#/$defs/CostCoverage"
+        },
+        "ingestedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "canonicalDetailAvailable": {
+          "type": "boolean"
+        },
+        "operationCount": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Compact trace-list and rollup inputs maintained with the canonical trace."
+        },
+        "llmCallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "toolCallCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "toolErrorCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "hasFeedback": {
+          "type": "boolean"
+        },
+        "hasRawRef": {
+          "type": "boolean"
+        },
+        "normalizationRevision": {
+          "type": "string",
+          "description": "Revision of materialized content, membership and display ordering."
+        },
+        "segmentCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "activeLatencyMs": {
+          "type": "number",
+          "format": "double"
+        },
+        "humanWaitMs": {
+          "type": "number",
+          "format": "double"
+        },
+        "wallLatencyMs": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "CanonicalStatus": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "partial",
+        "unknown"
+      ]
+    },
+    "TraceOutcomeDetails": {
+      "type": "object",
+      "required": [
+        "source",
+        "reason",
+        "execution"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "semantic",
+            "execution",
+            "unknown"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "execution": {
+          "$ref": "#/$defs/TraceExecutionOutcome"
+        }
+      }
+    },
+    "TraceExecutionOutcome": {
+      "type": "object",
+      "required": [
+        "status",
+        "reason",
+        "errorCount",
+        "recoveredErrorCount"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/CanonicalStatus"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "errorCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "recoveredErrorCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "PricingSource": {
+      "type": "string",
+      "enum": [
+        "provider",
+        "papaya_catalog",
+        "customer",
+        "unknown"
+      ]
+    },
+    "CostKind": {
+      "type": "string",
+      "enum": [
+        "observed",
+        "estimated",
+        "unavailable"
+      ]
+    },
+    "CostCoverage": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unavailable"
+      ]
+    },
+    "CanonicalTraceSegment": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "sourceTraceId",
+        "canonicalTraceId",
+        "sourceRef",
+        "ordinal",
+        "state"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "sourceTraceId": {
+          "type": "string"
+        },
+        "canonicalTraceId": {
+          "type": "string"
+        },
+        "sourceRef": {
+          "type": "string"
+        },
+        "sourceTraceDay": {
+          "type": "string",
+          "format": "date"
+        },
+        "ordinal": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "pending",
+            "appended",
+            "ambiguous"
+          ]
+        },
+        "sourceStartedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sourceEndedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "matchMethod": {
+          "type": "string"
+        },
+        "unresolvedReason": {
+          "type": "string"
+        },
+        "humanWaitMs": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "description": "Read-only source provenance. Persistence also retains private resolver evidence."
+    },
+    "CanonicalMessage": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "trace",
+        "role"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "traceDay": {
+          "type": "string",
+          "format": "date",
+          "description": "UTC day inherited from the owning trace."
+        },
+        "trace": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "content": {
+          "type": "string"
+        },
+        "contentPreview": {
+          "type": "string"
+        },
+        "contentRef": {
+          "type": "string"
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CanonicalMessagePart"
+          }
+        },
+        "orderHint": {
+          "$ref": "#/$defs/MessageOrderHint"
+        },
+        "segment": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "displayOrder": {
+          "type": "string",
+          "description": "Materialized lexicographic display order; never a source timestamp."
+        }
+      }
+    },
+    "MessageRole": {
+      "type": "string",
+      "enum": [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "unknown"
+      ]
+    },
+    "CanonicalMessagePart": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "tool_request",
+            "tool_result",
+            "opaque"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/CanonicalMessagePartSource"
+        },
+        "sourceOccurrences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CanonicalMessagePartSource"
+          }
+        },
+        "callKey": {
+          "type": "string"
+        },
+        "providerCallId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "argumentsRef": {
+          "type": "string"
+        },
+        "contentRef": {
+          "type": "string"
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "resultCapture": {
+          "type": "string",
+          "enum": [
+            "captured",
+            "not_captured",
+            "unresolved"
+          ]
+        },
+        "resultParts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CanonicalMessagePartRef"
+          }
+        },
+        "operationRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "execution",
+            "structured_output",
+            "unknown"
+          ]
+        },
+        "assembly": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "invalid"
+          ]
+        },
+        "correlationScope": {
+          "type": "string",
+          "description": "Scoped adapter identity and payload fingerprint, never human answer text."
+        },
+        "payloadHash": {
+          "type": "string"
+        }
+      }
+    },
+    "CanonicalMessagePartSource": {
+      "type": "object",
+      "required": [
+        "artifactRef",
+        "jsonPointer"
+      ],
+      "properties": {
+        "artifactRef": {
+          "type": "string"
+        },
+        "jsonPointer": {
+          "type": "string"
+        },
+        "providerRole": {
+          "type": "string"
+        },
+        "sourceTraceId": {
+          "type": "string"
+        },
+        "sourceSpanId": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "input",
+            "output"
+          ]
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    },
+    "CanonicalMessagePartRef": {
+      "type": "object",
+      "required": [
+        "messageId",
+        "partId"
+      ],
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "partId": {
+          "type": "string"
+        }
+      }
+    },
+    "MessageOrderHint": {
+      "type": "object",
+      "required": [
+        "anchor",
+        "placement",
+        "sourcePosition"
+      ],
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/MessageOrderAnchor"
+        },
+        "placement": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "sourcePosition": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "peerGroupKey": {
+          "type": "string"
+        }
+      }
+    },
+    "MessageOrderAnchor": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "message",
+            "operation"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "CanonicalOperation": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "trace",
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "traceDay": {
+          "type": "string",
+          "format": "date",
+          "description": "UTC day inherited from the owning trace."
+        },
+        "trace": {
+          "type": "string"
+        },
+        "parentOperation": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CanonicalStatus"
+        },
+        "metricStatus": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CanonicalStatus"
+            }
+          ],
+          "description": "Derived reliability status; captured status/error above remain unchanged."
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "latencyMs": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "error": {
+          "type": "string"
+        },
+        "inputRef": {
+          "type": "string"
+        },
+        "outputRef": {
+          "type": "string"
+        },
+        "toolCallKey": {
+          "type": "string"
+        },
+        "segment": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        },
+        "sourceSpanId": {
+          "type": "string"
+        },
+        "displayOrder": {
+          "type": "string"
+        },
+        "hitlBoundaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CanonicalHitlBoundary"
+          }
+        }
+      }
+    },
+    "OperationKind": {
+      "type": "string",
+      "enum": [
+        "workflow",
+        "agent",
+        "llm",
+        "tool",
+        "retriever",
+        "embedding",
+        "reranker",
+        "memory",
+        "state_transition",
+        "guardrail",
+        "router",
+        "human",
+        "handoff",
+        "evaluator",
+        "other",
+        "unknown"
+      ],
+      "description": "Canonical operation taxonomy. Labels and SDK mappings generate runtime constants; no per-span display-name field.",
+      "x-papaya-span-kind-map": {
+        "workflow": "workflow",
+        "agent": "agent",
+        "llm": "llm",
+        "tool": "tool",
+        "retrieval": "retriever",
+        "embedding": "embedding",
+        "reranker": "reranker",
+        "memory": "memory",
+        "state_transition": "state_transition",
+        "guardrail": "guardrail",
+        "router": "router",
+        "human": "human",
+        "handoff": "handoff",
+        "evaluator": "evaluator",
+        "other": "other"
+      },
+      "x-papaya-kind-labels": {
+        "workflow": "Orchestration",
+        "agent": "Agent",
+        "llm": "AI",
+        "tool": "Tool",
+        "retriever": "Retrieval",
+        "embedding": "Embedding",
+        "reranker": "Reranking",
+        "memory": "Memory",
+        "state_transition": "State change",
+        "guardrail": "Guardrail",
+        "router": "Routing",
+        "human": "Human step",
+        "handoff": "Handoff",
+        "evaluator": "Evaluation",
+        "other": "Other",
+        "unknown": "Unknown"
+      }
+    },
+    "CanonicalHitlBoundary": {
+      "type": "object",
+      "required": [
+        "eventId",
+        "kind",
+        "state"
+      ],
+      "properties": {
+        "eventId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "pause",
+            "resume"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "resolved",
+            "unresolved",
+            "waiting"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "sourceTraceId": {
+          "type": "string"
+        },
+        "sourceSpanId": {
+          "type": "string"
+        },
+        "predecessorTraceId": {
+          "type": "string"
+        },
+        "predecessorSpanId": {
+          "type": "string"
+        },
+        "humanWaitMs": {
+          "type": "number",
+          "format": "double"
+        },
+        "correlationType": {
+          "type": "string",
+          "enum": [
+            "application",
+            "native"
+          ]
+        },
+        "correlationId": {
+          "type": "string"
+        },
+        "nativeInterruptId": {
+          "type": "string"
+        }
+      }
+    },
+    "CanonicalArtifact": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "kind",
+        "uri"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "traceDay": {
+          "type": "string",
+          "format": "date",
+          "description": "UTC day inherited from the owning trace."
+        },
+        "trace": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string",
+          "description": "Inline payload content (tool inputs/outputs, prompts, logs). Truncated at the ingest cap for oversized payloads; `sizeBytes` always reflects the original size."
+        },
+        "segment": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        }
+      }
+    },
+    "ArtifactKind": {
+      "type": "string",
+      "enum": [
+        "raw_record",
+        "prompt",
+        "completion",
+        "tool_input",
+        "tool_output",
+        "log",
+        "diff",
+        "other"
+      ]
+    },
+    "ModelUsage": {
+      "type": "object",
+      "required": [
+        "id",
+        "workspaceId",
+        "trace",
+        "modelId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "type": "string"
+        },
+        "traceDay": {
+          "type": "string",
+          "format": "date",
+          "description": "UTC day inherited from the owning trace."
+        },
+        "trace": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "inputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "costUsd": {
+          "type": "number",
+          "format": "double"
+        },
+        "pricingSource": {
+          "$ref": "#/$defs/PricingSource"
+        },
+        "costKind": {
+          "$ref": "#/$defs/CostKind"
+        },
+        "pricingRateId": {
+          "type": "string"
+        },
+        "pricingInputPer1k": {
+          "type": "number",
+          "format": "double"
+        },
+        "pricingOutputPer1k": {
+          "type": "number",
+          "format": "double"
+        },
+        "pricingCurrency": {
+          "type": "string"
+        },
+        "pricingRegion": {
+          "type": "string"
+        },
+        "pricingRateUpdatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "pricedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cacheReadInputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "cacheCreationInputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "reasoningTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "rawOutputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "compactOutputTokens": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "serviceTier": {
+          "type": "string"
+        },
+        "segment": {
+          "type": "string"
+        },
+        "sourceId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
