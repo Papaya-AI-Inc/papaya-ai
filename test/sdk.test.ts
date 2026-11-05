@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type OpenAI from "openai";
 
-import { Papaya, type PapayaFetchInit } from "../src/index.js";
+import { Papaya, type PapayaFetchInit, type PapayaTraceSpan } from "../src/index.js";
 
 type CapturedRequest = {
   url: string;
@@ -448,6 +448,52 @@ try {
     "packed-two",
     "packed-three",
   ]);
+
+  const toolBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    toolBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ accepted: 1, rejected: 0 }), { status: 202 });
+  }) as typeof fetch;
+  const toolPapaya = Papaya.init({ apiKey: "papaya-test-token", endpoint: "https://papaya.example/api/v1/ingest/traces", capture: "redacted" });
+  const toolTrace = toolPapaya.startTrace({ traceId: "tool-option", workflowKey: "tool-option" });
+  const toolSpan = toolPapaya.startSpan({
+    trace: toolTrace,
+    name: "lookup_customer",
+    kind: "tool",
+    tool: { name: "lookup_customer", argumentsValue: { email: "ada@example.com" } },
+  });
+  assert.equal(toolSpan.tool?.name, "lookup_customer");
+  assert.equal(toolSpan.tool?.arguments?.redactionState, "redacted");
+  assert.deepEqual(toolSpan.tool?.arguments?.value, { email: "[redacted-email]" });
+  toolPapaya.finishSpan(toolSpan, "success", { toolResultValue: { plan: "pro" } });
+  assert.deepEqual(toolSpan.tool?.result?.value, { plan: "pro" });
+
+  const prebuilt = { contentType: "json" as const, contentRef: "blob://args", redactionState: "metadata" as const, byteLength: 42 };
+  const prebuiltSpan = toolPapaya.startSpan({ trace: toolTrace, name: "prebuilt", kind: "tool", tool: { name: "prebuilt", argumentsPayload: prebuilt, argumentsValue: { ignored: true } } });
+  assert.equal(prebuiltSpan.tool?.arguments, prebuilt);
+
+  const bareToolSpan = toolPapaya.startSpan({ trace: toolTrace, name: "bare_tool", kind: "tool" });
+  toolPapaya.finishSpan(bareToolSpan, "success", { toolResultValue: "done" });
+  assert.equal(bareToolSpan.tool?.name, "bare_tool");
+  assert.equal(bareToolSpan.tool?.result?.value, "done");
+
+  const llmSpanWithResult = toolPapaya.startSpan({ trace: toolTrace, name: "chat", kind: "llm" });
+  assert.doesNotThrow(() => toolPapaya.finishSpan(llmSpanWithResult, "success", { toolResultValue: "stray" }));
+  assert.equal(llmSpanWithResult.tool, undefined);
+  toolPapaya.finishTrace(toolTrace, "success");
+  assert.equal((await toolPapaya.flush()).status, "sent");
+  const toolExported = (toolBodies[0]?.traces as Array<{ spans: PapayaTraceSpan[] }>)[0]!.spans.find((span) => span.name === "lookup_customer");
+  assert.deepEqual(toolExported?.tool, {
+    name: "lookup_customer",
+    arguments: { contentType: "json", value: { email: "[redacted-email]" }, redactionState: "redacted", byteLength: 28 },
+    result: { contentType: "json", value: { plan: "pro" }, redactionState: "redacted", byteLength: 14 },
+  });
+
+  const toolMetadataPapaya = Papaya.init({ capture: "metadata" });
+  const metadataTrace = toolMetadataPapaya.startTrace({ workflowKey: "tool-metadata" });
+  const metadataSpan = toolMetadataPapaya.startSpan({ trace: metadataTrace, name: "lookup", kind: "tool", tool: { name: "lookup", argumentsValue: { email: "ada@example.com" } } });
+  assert.equal(metadataSpan.tool?.arguments?.value, undefined);
+  assert.equal(metadataSpan.tool?.arguments?.byteLength, 27);
 
   console.log("papaya-ai SDK tests passed");
 } finally {

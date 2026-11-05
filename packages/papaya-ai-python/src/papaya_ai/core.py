@@ -575,7 +575,9 @@ class Papaya:
         model_ref: dict[str, Any] | None = None,
         attributes: dict[str, Any] | None = None,
         started_at: str | None = None,
+        tool: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """``tool`` takes ``name`` plus ``arguments_payload`` (wins) or ``arguments_value``."""
         target = trace or _active_run.get()
         if target is None:
             target = self.start_trace({"workflowKey": name})
@@ -596,6 +598,13 @@ class Papaya:
             span["modelRef"] = model_ref
         if attributes:
             span["attributes"] = attributes
+        if tool:
+            span_tool: dict[str, Any] = {"name": tool["name"]}
+            if tool.get("arguments_payload") is not None:
+                span_tool["arguments"] = tool["arguments_payload"]
+            elif tool.get("arguments_value") is not None:
+                span_tool["arguments"] = _payload(tool["arguments_value"], self.capture)
+            span["tool"] = span_tool
         target["spans"].append(span)
         return span
 
@@ -715,6 +724,8 @@ class Papaya:
         model_used: str | None = None,
         error: BaseException | Any | None = None,
         ended_at: str | None = None,
+        tool_result_value: Any | None = None,
+        tool_result_payload: dict[str, Any] | None = None,
     ) -> None:
         span["endedAt"] = ended_at or _iso()
         span["status"] = status
@@ -728,6 +739,19 @@ class Papaya:
             span["modelRef"] = {**span.get("modelRef", {}), "used": model_used}
         if error is not None:
             span["error"] = _error_payload(error)
+        if tool_result_payload is not None:
+            tool_result: dict[str, Any] | None = tool_result_payload
+        elif tool_result_value is not None:
+            tool_result = _payload(tool_result_value, self.capture)
+        else:
+            tool_result = None
+        if tool_result is not None:
+            if span.get("tool"):
+                span["tool"]["result"] = tool_result
+            elif span.get("kind") == "tool":
+                span["tool"] = {"name": span["name"], "result": tool_result}
+            elif self.debug:
+                print(f"[papaya] tool result ignored on non-tool span {span['name']!r}", file=sys.stderr)
 
     def _new_pending_batch(self, traces: list[dict[str, Any]]) -> dict[str, Any]:
         # Built here, at flush time, so every split batch carries the bag and the bag
