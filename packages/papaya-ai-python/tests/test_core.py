@@ -181,6 +181,64 @@ class PapayaCoreTest(unittest.TestCase):
             ["packed-one", "packed-two", "packed-three"],
         )
 
+    def test_span_tool_option_captures_arguments_and_result(self):
+        captured = []
+
+        def transport(endpoint, headers, body):
+            captured.append(json.loads(body.decode("utf-8")))
+            return 202, '{"accepted":1,"rejected":0}'
+
+        papaya = Papaya.init(api_key="papaya-test-token", capture="redacted", transport=transport)
+        trace = papaya.start_trace({"traceId": "tool-option", "workflowKey": "tool-option"})
+        span = papaya.start_span(
+            trace=trace,
+            name="lookup_customer",
+            kind="tool",
+            tool={"name": "lookup_customer", "arguments_value": {"email": "ada@example.com"}},
+        )
+        self.assertEqual(span["tool"]["arguments"]["redactionState"], "redacted")
+        self.assertEqual(span["tool"]["arguments"]["value"], {"email": "[redacted-email]"})
+        papaya.finish_span(span, "success", tool_result_value={"plan": "pro"})
+        self.assertEqual(span["tool"]["result"]["value"], {"plan": "pro"})
+
+        prebuilt = {"contentType": "json", "contentRef": "blob://args", "redactionState": "metadata", "byteLength": 42}
+        prebuilt_span = papaya.start_span(
+            trace=trace,
+            name="prebuilt",
+            kind="tool",
+            tool={"name": "prebuilt", "arguments_payload": prebuilt, "arguments_value": {"ignored": True}},
+        )
+        self.assertIs(prebuilt_span["tool"]["arguments"], prebuilt)
+
+        bare = papaya.start_span(trace=trace, name="bare_tool", kind="tool")
+        papaya.finish_span(bare, "success", tool_result_value="done")
+        self.assertEqual(bare["tool"]["name"], "bare_tool")
+        self.assertEqual(bare["tool"]["result"]["value"], "done")
+
+        llm = papaya.start_span(trace=trace, name="chat", kind="llm")
+        papaya.finish_span(llm, "success", tool_result_value="stray")
+        self.assertNotIn("tool", llm)
+
+        papaya.finish_trace(trace, "success")
+        self.assertEqual(papaya.flush()["status"], "sent")
+        exported = next(s for s in captured[0]["traces"][0]["spans"] if s["name"] == "lookup_customer")
+        self.assertEqual(exported["tool"]["name"], "lookup_customer")
+        self.assertEqual(exported["tool"]["arguments"]["value"], {"email": "[redacted-email]"})
+        self.assertEqual(exported["tool"]["result"]["value"], {"plan": "pro"})
+
+    def test_span_tool_option_metadata_capture_keeps_byte_length_only(self):
+        papaya = Papaya.init(capture="metadata")
+        trace = papaya.start_trace({"workflowKey": "tool-metadata"})
+        span = papaya.start_span(
+            trace=trace,
+            name="lookup",
+            kind="tool",
+            tool={"name": "lookup", "arguments_value": {"email": "ada@example.com"}},
+        )
+        self.assertNotIn("value", span["tool"]["arguments"])
+        self.assertEqual(span["tool"]["arguments"]["redactionState"], "metadata")
+        self.assertGreater(span["tool"]["arguments"]["byteLength"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -140,6 +140,12 @@ export type PapayaStartSpanOptions = {
   modelRef?: TraceSpan["modelRef"];
   attributes?: Record<string, unknown>;
   startedAt?: string;
+  /** Tool call details. `argumentsPayload` wins over `argumentsValue`, which is captured with the configured mode. */
+  tool?: {
+    name: string;
+    argumentsValue?: unknown;
+    argumentsPayload?: PapayaPayloadRef;
+  };
 };
 
 export type PapayaFinishSpanOptions = {
@@ -149,6 +155,9 @@ export type PapayaFinishSpanOptions = {
   modelUsed?: string;
   error?: unknown;
   endedAt?: string;
+  /** Tool result. `toolResultPayload` wins over `toolResultValue`. Ignored on spans with no tool unless `kind` is "tool". */
+  toolResultValue?: unknown;
+  toolResultPayload?: PapayaPayloadRef;
 };
 
 type TraceBatch = {
@@ -619,6 +628,11 @@ export class Papaya {
       ...(options.modelRef ? { modelRef: options.modelRef } : {}),
       ...(options.attributes ? { attributes: options.attributes } : {}),
     };
+    if (options.tool) {
+      const toolArguments = options.tool.argumentsPayload ??
+        (options.tool.argumentsValue !== undefined ? payload(options.tool.argumentsValue, this.options.capture) : undefined);
+      span.tool = { name: options.tool.name, ...(toolArguments ? { arguments: toolArguments } : {}) };
+    }
     run.spans.push(span);
     return span;
   }
@@ -631,6 +645,13 @@ export class Papaya {
     if (options.usage) span.usage = compactRecord(options.usage) as TraceSpan["usage"];
     if (options.modelUsed) span.modelRef = { ...span.modelRef, used: options.modelUsed };
     if (options.error !== undefined) span.error = errorPayload(options.error);
+    const toolResult = options.toolResultPayload ??
+      (options.toolResultValue !== undefined ? payload(options.toolResultValue, this.options.capture) : undefined);
+    if (toolResult) {
+      if (span.tool) span.tool.result = toolResult;
+      else if (span.kind === "tool") span.tool = { name: span.name, result: toolResult };
+      else if (this.options.debug) console.warn(`[papaya] tool result ignored on non-tool span "${span.name}"`);
+    }
   }
 
   openai<T extends object>(client: T, options?: RunOptions): T {
