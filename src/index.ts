@@ -1,11 +1,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
+import { redactPapayaSdkEmailAddresses } from "./redaction.js";
+import { PapayaCaptureError, PapayaExporter, type PapayaExporterOptions, type PapayaExportResult, type PapayaFrozenBatch } from "./exporter.js";
+import { papayaUsageFromResult, papayaModelFromResult } from "./usage.js";
+export { PapayaCaptureError } from "./exporter.js";
+export type { PapayaExporterOptions, PapayaExportSnapshot, PapayaExportReceipt } from "./exporter.js";
 
 export type CaptureMode = "metadata" | "redacted" | "full";
 export type SpanStatus = "success" | "failed" | "partial" | "unknown";
 export type SpanKind = "workflow" | "agent" | "llm" | "tool" | "retrieval" | "embedding" | "reranker" | "memory" | "state_transition" | "guardrail" | "router" | "human" | "handoff" | "evaluator" | "other";
 
-export type PapayaOptions = RunOptions & {
+export type PapayaOptions = RunOptions & PapayaExporterOptions & {
   apiKey?: string;
   endpoint?: string;
   project?: string;
@@ -24,20 +29,7 @@ export type PapayaOptions = RunOptions & {
   debug?: boolean;
 };
 
-export type PapayaFlushResult =
-  | { status: "sent"; traceCount: number; endpoint: string; httpStatus: number; responseText?: string }
-  | { status: "skipped"; traceCount: number; reason: "empty" | "missing_api_key" }
-  | {
-    status: "failed";
-    traceCount: number;
-    endpoint: string;
-    httpStatus?: number;
-    responseText?: string;
-    error?: string;
-    errorName?: string;
-    errorCode?: string;
-    errorCause?: string;
-  };
+export type PapayaFlushResult = PapayaExportResult & { active: { traces: number; bytes: number; unfinishedTraces: number; completedTraces: number }; blockedCapture: { traces: number; bytes: number } };
 
 export type NativeFetch = typeof globalThis.fetch;
 export type FetchInput = Parameters<NativeFetch>[0];
@@ -71,7 +63,9 @@ export type RunOptions = {
   workflowKey?: string;
   workflowLabel?: string;
   conversational?: boolean;
+  group?: { name: string; value: string };
   metadata?: Record<string, unknown>;
+  provider?: string;
 };
 
 type PayloadRef = {
@@ -172,12 +166,9 @@ type TraceBatch = {
   traces: Array<ActiveRun & { rootSpanId: string }>;
 };
 
-type PendingBatch = {
-  batch: TraceBatch;
-  body: string;
-};
+type PapayaPendingBatch = PapayaFrozenBatch & { batch: TraceBatch };
 
-const SDK_VERSION = "0.1.4";
+const SDK_VERSION = "0.1.5";
 const DEFAULT_MAX_BATCH_BYTES = 512 * 1024;
 
 /**
@@ -243,8 +234,7 @@ const jsonableValue = (value: unknown, seen = new WeakSet<object>()): unknown =>
 };
 
 const redactString = (value: string): string =>
-  value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+  redactPapayaSdkEmailAddresses(value)
     .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[redacted-ssn]")
     .replace(/\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, "[redacted-phone]")
     .replace(/\b(?:sk|pk|papaya|openai|anthropic|gemini|aws)[-_][A-Za-z0-9_-]{12,}\b/gi, "[redacted-secret]")
@@ -296,22 +286,6 @@ const errorStringProp = (value: unknown, key: string): string | undefined => {
   return typeof raw === "string" && raw.trim() ? raw : undefined;
 };
 
-const flushErrorDetails = (error: unknown): Pick<Extract<PapayaFlushResult, { status: "failed" }>, "error" | "errorName" | "errorCode" | "errorCause"> => {
-  if (!(error instanceof Error)) return { error: String(error) };
-  const cause = (error as { cause?: unknown }).cause;
-  const causeMessage = cause instanceof Error
-    ? cause.message
-    : typeof cause === "string" && cause.trim()
-      ? cause
-      : undefined;
-  return {
-    error: error.message,
-    errorName: error.name,
-    errorCode: errorStringProp(error, "code") ?? errorStringProp(cause, "code"),
-    errorCause: causeMessage && causeMessage !== error.message ? causeMessage : undefined,
-  };
-};
-
 const modelFromArgs = (args: unknown[]): string | undefined => {
   const first = args[0];
   if (first && typeof first === "object" && "model" in first && typeof (first as { model?: unknown }).model === "string") {
@@ -338,35 +312,6 @@ const modelFromArgs = (args: unknown[]): string | undefined => {
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
-const usageRecordFrom = (result: unknown): Record<string, unknown> | undefined => {
-  const row = recordValue(result);
-  if (!row) return undefined;
-  const directUsage = recordValue(row.usage);
-  if (directUsage) return directUsage;
-  const directMetadata = recordValue(row.usageMetadata);
-  if (directMetadata) return directMetadata;
-  const body = recordValue(row.body);
-  return recordValue(body?.usage) ?? recordValue(body?.usageMetadata);
-};
-
-const usageFrom = (result: unknown): TraceSpan["usage"] | undefined => {
-  const usage = usageRecordFrom(result);
-  if (!usage) return undefined;
-  const inputTokens = numberValue(usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokenCount);
-  const outputTokens = numberValue(usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.candidatesTokenCount);
-  const cacheReadInputTokens = numberValue(usage.cache_read_input_tokens ?? usage.cached_input_tokens ?? usage.cacheReadInputTokens);
-  const cacheCreationInputTokens = numberValue(usage.cache_creation_input_tokens ?? usage.cacheCreationInputTokens);
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: numberValue(usage.total_tokens ?? usage.totalTokens ?? usage.totalTokenCount) ?? (inputTokens ?? 0) + (outputTokens ?? 0),
-    cacheReadInputTokens,
-    cacheCreationInputTokens,
-    costUsd: numberValue(usage.cost_usd ?? usage.costUsd),
-    pricingSource: usage.cost_usd || usage.costUsd ? "provider" : undefined,
-  };
-};
-
 const numberValue = (value: unknown): number | undefined => typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
 const compactRecord = <T extends Record<string, unknown>>(record: T): Partial<T> =>
@@ -381,6 +326,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const runOptionsFrom = (value: unknown): RunOptions | undefined => {
   if (!isRecord(value)) return undefined;
   const options: RunOptions = {};
+  if (typeof value.provider === "string") options.provider = value.provider;
   if (typeof value.runId === "string") options.runId = value.runId;
   if (typeof value.traceId === "string") options.traceId = value.traceId;
   if (typeof value.sessionId === "string") options.sessionId = value.sessionId;
@@ -390,6 +336,9 @@ const runOptionsFrom = (value: unknown): RunOptions | undefined => {
   if (typeof value.workflowKey === "string") options.workflowKey = value.workflowKey;
   if (typeof value.workflowLabel === "string") options.workflowLabel = value.workflowLabel;
   if (typeof value.conversational === "boolean") options.conversational = value.conversational;
+  if (isRecord(value.group) && typeof value.group.name === "string" && typeof value.group.value === "string") {
+    options.group = { name: value.group.name, value: value.group.value };
+  }
   if (isRecord(value.metadata)) options.metadata = value.metadata;
   return options;
 };
@@ -398,6 +347,7 @@ const mergeRunOptions = (...optionSets: Array<RunOptions | undefined>): RunOptio
   const result: RunOptions = {};
   for (const options of optionSets) {
     if (!options) continue;
+    if (options.provider !== undefined) result.provider = options.provider;
     if (options.runId !== undefined) result.runId = options.runId;
     if (options.traceId !== undefined) result.traceId = options.traceId;
     if (options.sessionId !== undefined) result.sessionId = options.sessionId;
@@ -407,6 +357,7 @@ const mergeRunOptions = (...optionSets: Array<RunOptions | undefined>): RunOptio
     if (options.workflowKey !== undefined) result.workflowKey = options.workflowKey;
     if (options.workflowLabel !== undefined) result.workflowLabel = options.workflowLabel;
     if (options.conversational !== undefined) result.conversational = options.conversational;
+    if (options.group !== undefined) result.group = { ...options.group };
     if (options.metadata) result.metadata = { ...(result.metadata ?? {}), ...options.metadata };
   }
   return result;
@@ -533,8 +484,11 @@ export class Papaya {
   private readonly options: Required<Pick<PapayaOptions, "endpoint" | "capture" | "project" | "environment">> & Omit<PapayaOptions, "endpoint" | "capture" | "project" | "environment">;
   private readonly defaultRunOptions: RunOptions;
   private readonly completed: ActiveRun[] = [];
-  private readonly pendingBatches: PendingBatch[] = [];
-  private flushInFlight?: Promise<PapayaFlushResult>;
+  private readonly exporter: PapayaExporter;
+  private readonly active = new Map<ActiveRun, { size: number; spans: Map<TraceSpan, number> }>();
+  private readonly spanOwners = new WeakMap<TraceSpan, ActiveRun>();
+  private readonly completedSizes = new Map<ActiveRun, number>();
+  private admissionClosed = false;
 
   private constructor(options: PapayaOptions = {}) {
     const {
@@ -550,6 +504,9 @@ export class Papaya {
       appliedRecommendations,
       maxBatchBytes,
       debug,
+      maxPendingBatches, maxPendingBytes, maxActiveTraces, maxActiveBytes, maxTraceBytes,
+      maxRetryAgeMs, maxAttempts, retryBaseMs, retryMaxMs, retryJitter,
+      requestTimeoutMs, flushTimeoutMs, diagnosticLimit, multipart, multipartIdleTtlSeconds,
       ...runDefaults
     } = options;
     this.options = {
@@ -567,6 +524,15 @@ export class Papaya {
       debug,
     };
     this.defaultRunOptions = runOptionsFrom(runDefaults) ?? {};
+    this.exporter = new PapayaExporter(this.options.apiKey, this.options.endpoint, {
+      maxPendingBatches, maxPendingBytes, maxActiveTraces, maxActiveBytes, maxTraceBytes,
+      maxRetryAgeMs, maxAttempts, retryBaseMs, retryMaxMs, retryJitter,
+      requestTimeoutMs, flushTimeoutMs, diagnosticLimit, multipart, multipartIdleTtlSeconds,
+    }, frozen => {
+      const original = JSON.parse(frozen.body) as TraceBatch;
+      const midpoint = Math.ceil(original.traces.length / 2);
+      return [this.newBatch(original.traces.slice(0, midpoint)), this.newBatch(original.traces.slice(midpoint))];
+    }, `@papaya-ai/tracing/${SDK_VERSION}`);
   }
 
   static init(options: PapayaOptions = {}): Papaya {
@@ -574,36 +540,53 @@ export class Papaya {
   }
 
   capturePayload(value: unknown): PapayaPayloadRef {
-    return payload(value, this.options.capture);
+    try { return payload(value, this.options.capture); }
+    catch { throw this.captureError("serialization_failed", 0, true); }
+  }
+
+  captureUsage(value: unknown) {
+    const diagnostics = new Set<string>();
+    const usage = papayaUsageFromResult(value, code => diagnostics.add(code));
+    for (const code of diagnostics) this.exporter.note(code);
+    return usage;
   }
 
   async run<T>(options: RunOptions, fn: () => T | Promise<T>): Promise<T> {
-    const run = this.createRun(mergeRunOptions(this.defaultRunOptions, options));
+    let run: ActiveRun;
+    try { run = this.createRun(mergeRunOptions(this.defaultRunOptions, options)); }
+    catch (failure) { this.telemetryFailure(failure); return fn(); }
     return storage.run(run, async () => {
       try {
         const result = await fn();
-        this.finishRun(run, "success");
+        this.safelyFinish(run, "success");
         return result;
       } catch (error) {
-        this.finishRun(run, "failed", error);
+        this.safelyFinish(run, "failed", error);
         throw error;
       }
     });
   }
 
   startTrace(options: RunOptions = {}, startOptions: PapayaStartTraceOptions = {}): PapayaTrace {
-    return this.createRun(mergeRunOptions(this.defaultRunOptions, options), startOptions);
+    return this.manualCapture(() => this.createRun(mergeRunOptions(this.defaultRunOptions, options), startOptions));
   }
 
   finishTrace(trace: PapayaTrace, status: SpanStatus, options: PapayaFinishSpanOptions = {}): void {
-    this.finishRun(trace, status, options.error, options);
+    this.manualCapture(() => this.finishRun(trace, status, options.error, options), trace);
   }
 
   startSpan(options: PapayaStartSpanOptions): PapayaTraceSpan {
     const run = options.trace ?? storage.getStore();
+    if (!run) throw new Error("Papaya.startSpan requires an explicit trace or an active papaya.run() scope.");
+    return this.manualCapture(() => this.captureSpan(options), run);
+  }
+
+  private captureSpan(options: PapayaStartSpanOptions): PapayaTraceSpan {
+    const run = options.trace ?? storage.getStore();
     if (!run) {
       throw new Error("Papaya.startSpan requires an explicit trace or an active papaya.run() scope.");
     }
+    if (!this.active.has(run)) throw this.captureError("capture_not_active");
     const span: TraceSpan = {
       spanId: options.spanId ?? id("span"),
       parentSpanId: options.parentSpanId ?? run.rootSpanId,
@@ -620,10 +603,17 @@ export class Papaya {
       ...(options.attributes ? { attributes: options.attributes } : {}),
     };
     run.spans.push(span);
+    this.spanOwners.set(span, run);
+    this.active.get(run)?.spans.set(span, -1);
+    this.accountSpan(span);
     return span;
   }
 
   finishSpan(span: PapayaTraceSpan, status: SpanStatus, options: PapayaFinishSpanOptions = {}): void {
+    this.manualCapture(() => this.completeSpan(span, status, options), this.spanOwners.get(span));
+  }
+
+  private completeSpan(span: PapayaTraceSpan, status: SpanStatus, options: PapayaFinishSpanOptions): void {
     span.endedAt = options.endedAt ?? iso();
     span.status = status;
     if (options.outputPayload) span.outputPayload = options.outputPayload;
@@ -631,6 +621,7 @@ export class Papaya {
     if (options.usage) span.usage = compactRecord(options.usage) as TraceSpan["usage"];
     if (options.modelUsed) span.modelRef = { ...span.modelRef, used: options.modelUsed };
     if (options.error !== undefined) span.error = errorPayload(options.error);
+    this.accountSpan(span);
   }
 
   openai<T extends object>(client: T, options?: RunOptions): T {
@@ -662,17 +653,48 @@ export class Papaya {
       this.captureFetch(fetchImpl, input, init, defaults);
   }
 
-  async flush(): Promise<PapayaFlushResult> {
-    if (this.flushInFlight) return this.flushInFlight;
-    this.flushInFlight = this.flushPending();
-    try {
-      return await this.flushInFlight;
-    } finally {
-      this.flushInFlight = undefined;
-    }
+  async flush(timeoutMs = this.exporter.limits.flushTimeoutMs, signal?: AbortSignal): Promise<PapayaFlushResult> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError("timeoutMs must be finite and nonnegative");
+    return this.flushPending(timeoutMs, signal);
   }
 
-  private newBatch(traces: ActiveRun[]): PendingBatch {
+  configureExport(options: { apiKey?: string; endpoint?: string }): void {
+    const apiKey = Object.hasOwn(options, "apiKey") ? options.apiKey : this.options.apiKey;
+    const endpoint = options.endpoint ?? this.options.endpoint;
+    this.exporter.configure(apiKey, endpoint);
+    this.options.apiKey = apiKey; this.options.endpoint = endpoint;
+  }
+
+  private activeStatus() {
+    const unfinished = [...this.active.values()];
+    return {
+      traces: unfinished.length + this.completed.length,
+      bytes: unfinished.reduce((n, v) => n + v.size, 0) + [...this.completedSizes.values()].reduce((n, v) => n + v, 0),
+      unfinishedTraces: unfinished.length, completedTraces: this.completed.length,
+    };
+  }
+
+  exportStatus() { return { ...this.exporter.snapshot(), active: this.activeStatus() }; }
+
+  async close(timeoutMs = 5_000): Promise<PapayaFlushResult> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError("timeoutMs must be finite and nonnegative");
+    this.admissionClosed = true;
+    const until = performance.now() + timeoutMs;
+    const targets: ReturnType<PapayaExporter["targets"]> = [];
+    let result: PapayaExportResult;
+    try {
+      do {
+        this.freezeCompletedBatches();
+        const added = this.exporter.targets().filter(t => !targets.some(old => old.batch === t.batch));
+        targets.push(...added);
+        result = await this.exporter.wait(targets, Math.max(0, until - performance.now()), true);
+        if (!this.completed.length || !added.length || result.authPaused || result.reason === "missing_api_key") break;
+      } while (performance.now() < until);
+    } finally { this.exporter.stop(); }
+    return this.withActive(this.exporter.result(targets, result!.timedOut), true);
+  }
+
+  private newBatch(traces: ActiveRun[]): PapayaPendingBatch {
     // Built here, at batch time, rather than at construction: every split batch goes through this
     // builder, so this is what guarantees each one carries the bag.
     const papaya = buildPapayaControlBag(this.options.appliedRecommendations);
@@ -694,108 +716,87 @@ export class Papaya {
       ...(papaya ? { papaya } : {}),
       traces,
     };
-    return { batch, body: JSON.stringify(batch) };
+    return { batch, batchId: batch.batchId, traceIds: traces.map(t => t.traceId), body: JSON.stringify(batch) };
   }
 
   private freezeCompletedBatches(): void {
-    if (this.completed.length === 0) return;
-    let current: ActiveRun[] = [];
-    for (const trace of this.completed.splice(0, this.completed.length)) {
-      const candidate = this.newBatch([...current, trace]);
-      if (current.length > 0 && Buffer.byteLength(candidate.body) > (this.options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES)) {
-        this.pendingBatches.push(this.newBatch(current));
-        current = [trace];
-      } else {
-        current.push(trace);
+    while (this.completed.length) {
+      let batch = this.newBatch([this.completed[0]!]);
+      let count = 1;
+      // Count bytes once per trace; avoid serializing a growing batch for every item.
+      const parts = [JSON.stringify(this.completed[0]!)];
+      let bytes = Buffer.byteLength(batch.body);
+      while (count < this.completed.length) {
+        const part = JSON.stringify(this.completed[count]!);
+        const added = Buffer.byteLength(part) + 1;
+        if (bytes + added > (this.options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES)) break;
+        parts.push(part); bytes += added; count++;
       }
+      if (count > 1) {
+        batch.batch.traces = this.completed.slice(0, count);
+        // Serialize the envelope once, then append already serialized trace snapshots.
+        const envelope = { ...batch.batch, traces: [] };
+        batch = { ...batch, traceIds: batch.batch.traces.map(t => t.traceId), body: JSON.stringify(envelope).slice(0, -2) + parts.join(",") + "]}" };
+      }
+      if (!this.exporter.admit(batch)) break;
+      for (const trace of this.completed.splice(0, count)) this.completedSizes.delete(trace);
     }
-    if (current.length > 0) this.pendingBatches.push(this.newBatch(current));
   }
 
-  private splitPendingBatch(index: number, pending: PendingBatch): void {
-    const midpoint = Math.ceil(pending.batch.traces.length / 2);
-    const left = this.newBatch(pending.batch.traces.slice(0, midpoint));
-    const right = this.newBatch(pending.batch.traces.slice(midpoint));
-    this.pendingBatches.splice(index, 1, left, right);
+  private withActive(result: PapayaExportResult, closing = false): PapayaFlushResult {
+    const active = this.activeStatus();
+    const blockedCapture = { traces: this.completed.length, bytes: [...this.completedSizes.values()].reduce((n, v) => n + v, 0) };
+    if (blockedCapture.traces || (closing && active.traces)) {
+      result.status = "failed"; result.errorCode = "undelivered_capture"; delete result.reason;
+    }
+    return { ...result, active, blockedCapture };
   }
 
-  private async flushPending(): Promise<PapayaFlushResult> {
+  private async flushPending(timeoutMs: number, signal?: AbortSignal): Promise<PapayaFlushResult> {
     this.freezeCompletedBatches();
-    const traceCount = this.pendingBatches.reduce((sum, pending) => sum + pending.batch.traces.length, 0);
-    if (traceCount === 0) return { status: "skipped", traceCount: 0, reason: "empty" };
-    if (!this.options.apiKey) {
-      if (this.options.debug) console.warn("[papaya] export skipped: missing PAPAYA_API_KEY");
-      return { status: "skipped", traceCount, reason: "missing_api_key" };
-    }
+    return this.withActive(await this.exporter.wait(this.exporter.targets(), timeoutMs, false, signal));
+  }
 
-    let lastHttpStatus = 202;
-    let lastResponseText: string | undefined;
-    let index = 0;
-    while (index < this.pendingBatches.length) {
-      const pending = this.pendingBatches[index]!;
-      try {
-        const response = await fetch(this.options.endpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.options.apiKey}`,
-            "Content-Type": "application/json",
-            "User-Agent": `@papaya-ai/tracing/${SDK_VERSION}`,
-          },
-          body: pending.body,
-        });
-        const responseText = await response.text();
-        if (response.ok) {
-          lastHttpStatus = response.status;
-          lastResponseText = responseText;
-          this.pendingBatches.splice(index, 1);
-          continue;
-        }
-        if (response.status === 413 && pending.batch.traces.length > 1) {
-          this.splitPendingBatch(index, pending);
-          continue;
-        }
-        if (response.status === 413) {
-          this.pendingBatches.splice(index, 1);
-          return {
-            status: "failed",
-            traceCount: 1,
-            endpoint: this.options.endpoint,
-            httpStatus: response.status,
-            responseText,
-            error: "The trace exceeds the server's single-trace limit.",
-            errorCode: "oversized_trace",
-          };
-        }
-        const terminal = [400, 401, 403, 409].includes(response.status);
-        if (terminal) this.pendingBatches.splice(index, 1);
-        if (this.options.debug) {
-          console.warn(`[papaya] export failed: ${response.status} ${responseText}`);
-        }
-        return {
-          status: "failed",
-          traceCount: pending.batch.traces.length,
-          endpoint: this.options.endpoint,
-          httpStatus: response.status,
-          responseText,
-          errorCode: terminal ? `http_${response.status}` : "retryable_http_error",
-        };
-      } catch (error) {
-        if (this.options.debug) console.warn("[papaya] export failed", error);
-        return {
-          status: "failed",
-          traceCount: pending.batch.traces.length,
-          endpoint: this.options.endpoint,
-          ...flushErrorDetails(error),
-        };
+  private manualCapture<T>(capture: () => T, run?: ActiveRun): T {
+    try { return capture(); }
+    catch (error) {
+      if (error instanceof PapayaCaptureError) {
+        if (run && error.code === "serialization_failed") this.active.delete(run);
+        throw error;
       }
+      if (run) this.active.delete(run);
+      throw this.captureError("serialization_failed", 0, true);
     }
-    return {
-      status: "sent",
-      traceCount,
-      endpoint: this.options.endpoint,
-      httpStatus: lastHttpStatus,
-      responseText: lastResponseText,
-    };
+  }
+  private captureError(code: string, bytes = 0, capture = false): PapayaCaptureError {
+    this.exporter.record(code, bytes, capture); return new PapayaCaptureError(code);
+  }
+  private captureSize(value: unknown): number {
+    try { return Buffer.byteLength(JSON.stringify(value)); } catch { throw this.captureError("serialization_failed", 0, true); }
+  }
+  private checkCapacity(size: number, extraTrace = false): void {
+    const active = this.activeStatus(), limits = this.exporter.limits;
+    const code = extraTrace && this.admissionClosed ? "capture_closed" : extraTrace && active.traces >= limits.maxActiveTraces ? "active_traces_capacity" : active.bytes + size > limits.maxActiveBytes ? "active_bytes_capacity" : undefined;
+    if (code) throw this.captureError(code, Math.max(0, size));
+  }
+  private accountSpan(span: TraceSpan): void {
+    const run = this.spanOwners.get(span), owned = run && this.active.get(run);
+    if (!owned) throw this.captureError("capture_not_active");
+    let size: number, delta: number;
+    try {
+      size = this.captureSize(span); delta = size - (owned.spans.get(span) ?? 0);
+      if (owned.size + delta > this.exporter.limits.maxTraceBytes) throw this.captureError("trace_bytes_capacity", size);
+      this.checkCapacity(delta);
+    } catch (error) { this.active.delete(run!); throw error; }
+    owned.size += delta; owned.spans.set(span, size);
+    const active = this.activeStatus(); this.exporter.updateActive(active.traces, active.bytes);
+  }
+  private telemetryFailure(error: unknown, run?: ActiveRun): void {
+    if (run) this.active.delete(run);
+    if (!(error instanceof PapayaCaptureError)) this.exporter.record("capture_failed", 0, true);
+  }
+  private safelyFinish(run: ActiveRun, status: SpanStatus, error?: unknown): void {
+    try { if (this.active.has(run)) this.finishRun(run, status, error); } catch (failure) { this.telemetryFailure(failure, run); }
   }
 
   private wrapClient<T extends object>(provider: string, client: T, path: string[] = [], wrapperOptions?: RunOptions): T {
@@ -843,10 +844,9 @@ export class Papaya {
       });
     }
 
-    const implicitRun = this.createRun({
-      workflowKey: callOptions.workflowKey ?? `${provider}.fetch`,
-      ...callOptions,
-    });
+    let implicitRun: ActiveRun;
+    try { implicitRun = this.createRun({ workflowKey: callOptions.workflowKey ?? `${provider}.fetch`, ...callOptions }); }
+    catch (failure) { this.telemetryFailure(failure); return fetchImpl(input, providerInit); }
 
     return storage.run(implicitRun, async () => {
       try {
@@ -858,10 +858,10 @@ export class Papaya {
           callOptions,
           spanName,
         });
-        this.finishRun(implicitRun, response.ok ? "success" : "partial");
+        this.safelyFinish(implicitRun, response.ok ? "success" : "partial");
         return response;
       } catch (error) {
-        this.finishRun(implicitRun, "failed", error);
+        this.safelyFinish(implicitRun, "failed", error);
         throw error;
       }
     });
@@ -881,9 +881,10 @@ export class Papaya {
     },
   ): Promise<Response> {
     const run = storage.getStore();
-    if (!run) return fetchImpl(input, init);
+    if (!run || !this.active.has(run)) return fetchImpl(input, init);
 
-    const span: TraceSpan = {
+    let span: TraceSpan;
+    try { span = {
       spanId: id("span"),
       parentSpanId: run.rootSpanId,
       name: info.spanName ?? `${info.provider}.fetch`,
@@ -910,20 +911,25 @@ export class Papaya {
       },
     };
     run.spans.push(span);
+    this.spanOwners.set(span, run); this.active.get(run)?.spans.set(span, -1); this.accountSpan(span);
+    } catch (failure) { this.telemetryFailure(failure, run); return fetchImpl(input, init); }
 
     try {
       const response = await fetchImpl(input, init);
       span.endedAt = iso();
       span.status = response.ok ? "success" : "failed";
+      try {
       const capturedResponse = await captureableFetchResponse(response);
       span.outputPayload = payload(capturedResponse, this.options.capture);
-      span.usage = usageFrom(capturedResponse);
-      span.modelRef = { ...span.modelRef, used: info.model };
+      span.usage = this.captureUsage(capturedResponse);
+      span.modelRef = { ...span.modelRef, used: papayaModelFromResult(capturedResponse) ?? info.model };
+      this.accountSpan(span);
+      } catch (failure) { this.telemetryFailure(failure, run); }
       return response;
     } catch (error) {
       span.endedAt = iso();
       span.status = "failed";
-      span.error = errorPayload(error);
+      try { span.error = errorPayload(error); this.accountSpan(span); } catch (failure) { this.telemetryFailure(failure, run); }
       throw error;
     }
   }
@@ -932,7 +938,8 @@ export class Papaya {
     const rootSpanId = startOptions.rootSpanId ?? id("span");
     const traceId = options.traceId ?? id("trace");
     const runId = options.runId ?? id("run");
-    return {
+    this.checkCapacity(0, true);
+    const run: ActiveRun = {
       ...options,
       traceId,
       runId,
@@ -957,10 +964,18 @@ export class Papaya {
         },
       }],
     };
+    const size = this.captureSize(run);
+    if (size > this.exporter.limits.maxTraceBytes) throw this.captureError("trace_bytes_capacity", size);
+    this.checkCapacity(size, true);
+    this.active.set(run, { size, spans: new Map([[run.spans[0]!, this.captureSize(run.spans[0])]]) });
+    this.spanOwners.set(run.spans[0]!, run);
+    const active = this.activeStatus(); this.exporter.updateActive(active.traces, active.bytes);
+    return run;
   }
 
   private finishRun(run: ActiveRun, status: SpanStatus, error?: unknown, options: PapayaFinishSpanOptions = {}): void {
-    run.spans[0] = {
+    if (!this.active.has(run)) throw this.captureError("capture_not_active");
+    Object.assign(run.spans[0]!, {
       ...run.spans[0]!,
       endedAt: options.endedAt ?? iso(),
       status,
@@ -972,38 +987,46 @@ export class Papaya {
       ...(options.usage ? { usage: compactRecord(options.usage) as TraceSpan["usage"] } : {}),
       ...(options.modelUsed ? { modelRef: { ...run.spans[0]?.modelRef, used: options.modelUsed } } : {}),
       ...(error !== undefined ? { error: errorPayload(error) } : {}),
-    };
-    this.completed.push(run);
+    });
+    this.accountSpan(run.spans[0]!);
+    const size = this.captureSize(run), previous = this.active.get(run)!.size;
+    if (size > this.exporter.limits.maxTraceBytes) { this.active.delete(run); throw this.captureError("trace_bytes_capacity", size); }
+    try { this.checkCapacity(size - previous); } catch (error) { this.active.delete(run); throw error; }
+    const snapshot = JSON.parse(JSON.stringify(run)) as ActiveRun;
+    this.active.delete(run); this.completed.push(snapshot); this.completedSizes.set(snapshot, size);
   }
 
   private captureProviderCall<T>(provider: string, path: string[], call: (args: unknown[]) => T, args: unknown[], wrapperOptions?: RunOptions): T {
-    const { providerArgs, callOptions } = providerArgsAndPapayaOptions(args);
+    let prepared: ReturnType<typeof providerArgsAndPapayaOptions>;
+    try { prepared = providerArgsAndPapayaOptions(args); }
+    catch (failure) { this.telemetryFailure(failure); return call(args); }
+    const { providerArgs, callOptions } = prepared;
+    provider = callOptions?.provider ?? wrapperOptions?.provider ?? this.defaultRunOptions.provider ?? provider;
     const run = storage.getStore();
     if (run) {
       return this.captureProviderCallInRun(provider, path, (nextArgs) => call(nextArgs), providerArgs, mergeRunOptions(this.defaultRunOptions, wrapperOptions, run, callOptions));
     }
 
     const implicitRunOptions = mergeRunOptions(this.defaultRunOptions, wrapperOptions, callOptions);
-    const implicitRun = this.createRun({
-      workflowKey: implicitRunOptions.workflowKey ?? `${provider}.${path.join(".")}`,
-      ...implicitRunOptions,
-    });
+    let implicitRun: ActiveRun;
+    try { implicitRun = this.createRun({ workflowKey: implicitRunOptions.workflowKey ?? `${provider}.${path.join(".")}`, ...implicitRunOptions }); }
+    catch (failure) { this.telemetryFailure(failure); return call(providerArgs); }
     return storage.run(implicitRun, () => {
       try {
         const result = this.captureProviderCallInRun(provider, path, (nextArgs) => call(nextArgs), providerArgs, implicitRunOptions);
         if (isPromiseLike(result)) {
           return result.then((value) => {
-            this.finishRun(implicitRun, "success");
+            this.safelyFinish(implicitRun, "success");
             return value;
           }, (error) => {
-            this.finishRun(implicitRun, "failed", error);
+            this.safelyFinish(implicitRun, "failed", error);
             throw error;
           }) as T;
         }
-        this.finishRun(implicitRun, "success");
+        this.safelyFinish(implicitRun, "success");
         return result;
       } catch (error) {
-        this.finishRun(implicitRun, "failed", error);
+        this.safelyFinish(implicitRun, "failed", error);
         throw error;
       }
     });
@@ -1011,11 +1034,13 @@ export class Papaya {
 
   private captureProviderCallInRun<T>(provider: string, path: string[], call: (args: unknown[]) => T, args: unknown[], boundary: RunOptions): T {
     const run = storage.getStore();
-    if (!run) return call(args);
+    if (!run || !this.active.has(run)) return call(args);
     const spanId = id("span");
     const parentSpanId = run.rootSpanId;
+    let span: TraceSpan;
+    try {
     const model = modelFromArgs(args);
-    const span: TraceSpan = {
+    span = {
       spanId,
       parentSpanId,
       name: `${provider}.${path.join(".")}`,
@@ -1037,16 +1062,21 @@ export class Papaya {
       },
     };
     run.spans.push(span);
+    this.spanOwners.set(span, run); this.active.get(run)?.spans.set(span, -1); this.accountSpan(span);
+    } catch (failure) { this.telemetryFailure(failure, run); return call(args); }
 
     const finish = (status: SpanStatus, result?: unknown, error?: unknown): void => {
+      try {
       span.endedAt = iso();
       span.status = status;
       if (result !== undefined) {
         span.outputPayload = payload(result, this.options.capture);
-        span.usage = usageFrom(result);
-        span.modelRef = { ...span.modelRef, used: modelFromArgs([result]) ?? span.modelRef?.requested };
+        span.usage = this.captureUsage(result);
+        span.modelRef = { ...span.modelRef, used: papayaModelFromResult(result) ?? span.modelRef?.requested };
       }
       if (error !== undefined) span.error = errorPayload(error);
+      this.accountSpan(span);
+      } catch (failure) { this.telemetryFailure(failure, run); }
     };
 
     try {

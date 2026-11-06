@@ -45,7 +45,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
   const body = typeof init?.body === "string" ? JSON.parse(init.body) as CapturedBatch : {};
   captured.push(body);
-  return new Response(JSON.stringify({ accepted: 1, rejected: 0 }), {
+  return new Response(JSON.stringify({ accepted: Array.isArray(body.traces) ? body.traces.length : 0, rejected: 0 }), {
     status: 202,
     headers: { "content-type": "application/json" },
   });

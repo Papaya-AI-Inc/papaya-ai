@@ -111,3 +111,17 @@ python -m venv /tmp/papaya-python-smoke
 /tmp/papaya-python-smoke/bin/python -m pip install "papaya-ai[langchain]"
 /tmp/papaya-python-smoke/bin/python -c "from papaya_ai import Papaya; from papaya_ai.integrations.langchain import PapayaCallbackHandler; print(Papaya.__name__, PapayaCallbackHandler.__name__)"
 ```
+
+## Version 0.1.5
+
+Both packages contain the SDK reliability changes validated against the production ingestion service:
+
+- Linear-time redaction for adversarial strings and large payloads.
+- Bounded, memory-only capture and export queues with explicit admission failures and retained unsuccessful delivery receipts.
+- Fair retries with backoff, Retry-After, authentication pause/reconfiguration, cancellation and bounded shutdown. Python exports on a dedicated thread and provides asynchronous lifecycle methods.
+- Opt-in resumable multipart uploads with checksums and recovery from lost acknowledgments.
+- Provider usage, zero reported cost, cache/reasoning token details and separate requested/returned model labels.
+
+Neither SDK adds a runtime dependency or disk-backed outbox. Applications must upgrade the package to receive these changes. A process exit can lose unaccepted memory; bounded queues and retries do not guarantee delivery through an indefinite outage.
+
+The SDK runtime matches the implementation validated against hosted production ingestion; only version labels and test fixture paths change for standalone packaging. Hosted checks passed 51 readiness checks and 13 browser checks, including fresh ingestion and raw trace visibility. Native TypeScript transport checks covered a 9 MiB synthetic batch and lost part/completion acknowledgments.

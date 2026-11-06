@@ -1,0 +1,8 @@
+{
+  "description": "Synthetic Petavue-shaped repeated media/history; no customer content",
+  "schemaVersion": "2026-06-05",
+  "workflowKey": "synthetic-multipart-regression",
+  "media": {"type": "image_url", "urlPrefix": "data:image/png;base64,", "repeat": "aGVsbG9zeW50aGV0aWM="},
+  "history": [{"role": "user", "content": "synthetic repeated history"}, {"role": "assistant", "content": "synthetic tool result"}],
+  "marker": "synthetic-multipart-complete-tail"
+}

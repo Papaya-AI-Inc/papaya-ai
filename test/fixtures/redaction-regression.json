@@ -1,0 +1,16 @@
+{
+  "description": "Synthetic structural regression for large unbroken trace content; no customer data.",
+  "scalingBytes": [8192, 16384, 32768, 65536, 131072, 1048576],
+  "cases": [
+    "No email here",
+    "user@example.com",
+    "UPPER+tag@EXAMPLE.CO.UK and x@y.io",
+    "a@b.co@d.com",
+    "a@b.co_x@y.io",
+    "a@b..co and a@b.ab1tail",
+    "not-an-email@host and @example.com",
+    "a@b.c a@b.12 a@b.-ab",
+    "first.last%tag+more@example.test!",
+    "unicode-é@example.com next@example.test"
+  ]
+}

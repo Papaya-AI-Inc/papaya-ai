@@ -55,8 +55,9 @@ assert.equal(buildPapayaControlBag(["junk"]), undefined);
 const captured: Array<Record<string, unknown>> = [];
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
-  captured.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-  return new Response(JSON.stringify({ accepted: 1, rejected: 0 }), {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  captured.push(body);
+  return new Response(JSON.stringify({ accepted: Array.isArray(body.traces) ? body.traces.length : 0, rejected: 0 }), {
     status: 202,
     headers: { "content-type": "application/json" },
   });

@@ -59,7 +59,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
   captured.push({ url: String(input), init, body });
-  return new Response(JSON.stringify({ accepted: 1, rejected: 0 }), {
+  return new Response(JSON.stringify({ accepted: Array.isArray(body.traces) ? body.traces.length : 0, rejected: 0 }), {
     status: 202,
     headers: { "content-type": "application/json" },
   });
@@ -77,6 +77,7 @@ try {
   });
   const openai = papaya.openai(provider, {
     workflowKey: "checkout",
+    group: { name: "url", value: "wrapper.example.gov" },
     metadata: { release: "sha-test", plan: "enterprise" },
   });
 
@@ -87,6 +88,7 @@ try {
     papaya: {
       sessionId: "session-1",
       userId: "user-1",
+      group: { name: "url", value: "northfield.example.gov" },
       metadata: { claimId: "claim-1", plan: "enterprise-plus" },
     },
   });
@@ -98,7 +100,7 @@ try {
   assert.equal(providerRequest.authorization, "Bearer should-not-reach-papaya");
 
   assert.equal(captured.length, 1);
-  assert.deepEqual(flushResult, {
+  assert.partialDeepStrictEqual(flushResult, {
     status: "sent",
     traceCount: 1,
     endpoint: "https://papaya.example/api/v1/ingest/traces",
@@ -107,10 +109,10 @@ try {
   });
   assert.equal(captured[0]?.url, "https://papaya.example/api/v1/ingest/traces");
   assert.equal((captured[0]?.init?.headers as Record<string, string>).Authorization, "Bearer papaya-test-token");
-  assert.equal((captured[0]?.init?.headers as Record<string, string>)["User-Agent"], "@papaya-ai/tracing/0.1.4");
+  assert.equal((captured[0]?.init?.headers as Record<string, string>)["User-Agent"], "@papaya-ai/tracing/0.1.5");
   assert.deepEqual(captured[0]?.body.sdk, {
     name: "@papaya-ai/tracing",
-    version: "0.1.4",
+    version: "0.1.5",
     language: "typescript",
     runtime: `node/${process.version}`,
   });
@@ -123,10 +125,11 @@ try {
   assert.equal(exported.includes("[redacted-secret]"), true);
   assert.equal(exported.includes("enterprise-plus"), true);
 
-  const traces = captured[0]?.body.traces as Array<{ workflowKey?: string; sessionId?: string; spans?: Array<{ attributes?: Record<string, unknown>; usage?: Record<string, unknown> }> }>;
+  const traces = captured[0]?.body.traces as Array<{ workflowKey?: string; sessionId?: string; group?: { name: string; value: string }; spans?: Array<{ attributes?: Record<string, unknown>; usage?: Record<string, unknown> }> }>;
   assert.equal(traces.length, 1);
   assert.equal(traces[0]?.workflowKey, "checkout");
   assert.equal(traces[0]?.sessionId, "session-1");
+  assert.deepEqual(traces[0]?.group, { name: "url", value: "northfield.example.gov" });
   const llmSpan = traces[0]?.spans?.find((span) => span.attributes?.method === "chat.completions.create");
   assert.ok(llmSpan);
   assert.equal(llmSpan.usage?.inputTokens, 11);
@@ -166,7 +169,7 @@ try {
     messages: [{ role: "user", content: "hello" }],
   });
   const missingKeyFlush = await missingKeyPapaya.flush();
-  assert.deepEqual(missingKeyFlush, {
+  assert.partialDeepStrictEqual(missingKeyFlush, {
     status: "skipped",
     traceCount: 1,
     reason: "missing_api_key",

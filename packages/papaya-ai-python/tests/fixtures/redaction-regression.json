@@ -1,0 +1,14 @@
+{
+  "description": "Synthetic reproduction of long-string redaction from the SDK field report; no customer content.",
+  "longRunCharacters": 1048576,
+  "cases": [
+    {"input": "hello ada@example.test", "expected": "hello [redacted-email]"},
+    {"input": "first.last+tag@example.test!", "expected": "[redacted-email]!"},
+    {"input": "prefix:a@one.test%b@two.test:suffix", "expected": "prefix:[redacted-email][redacted-email]:suffix"},
+    {"input": "a@one.test@two.test", "expected": "[redacted-email]@two.test"},
+    {"input": "a@invalid b@domain.1", "expected": "a@invalid b@domain.1"},
+    {"input": "İſK@example.test", "expected": "[redacted-email]"},
+    {"input": "start\nname@example.test\nend", "expected": "start\n[redacted-email]\nend"},
+    {"input": "a@one.test and b@two.test", "expected": "[redacted-email] and [redacted-email]"}
+  ]
+}

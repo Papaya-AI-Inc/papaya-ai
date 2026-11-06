@@ -1,0 +1,11 @@
+{
+  "description": "Synthetic reproduction of one poisoned upload blocking three healthy traces; no customer content or external provider calls.",
+  "traces": [
+    {"traceId": "synthetic-poison", "workflowKey": "synthetic-exporter-poison", "marker": "retain-poison-content"},
+    {"traceId": "synthetic-healthy-one", "workflowKey": "synthetic-exporter-healthy", "marker": "retain-first-healthy-content"},
+    {"traceId": "synthetic-healthy-two", "workflowKey": "synthetic-exporter-healthy", "marker": "retain-second-healthy-content"},
+    {"traceId": "synthetic-healthy-three", "workflowKey": "synthetic-exporter-healthy", "marker": "retain-third-healthy-content"}
+  ],
+  "concurrency": {"captures": 24, "payloadCharacters": 4096, "heartbeatIntervalSeconds": 0.005, "repetitions": 5, "p95LagBudgetMs": 100, "maxLagBudgetMs": 250, "executorDeadlineSeconds": 1},
+  "memory": {"pendingBodyBudgetBytes": 2097152, "processGrowthBudgetBytes": 100663296}
+}

@@ -17,7 +17,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
   captured.push({ url: String(input), init, body });
-  return new Response(JSON.stringify({ accepted: 1, rejected: 0 }), {
+  return new Response(JSON.stringify({ accepted: Array.isArray(body.traces) ? body.traces.length : 0, rejected: 0 }), {
     status: 202,
     headers: { "content-type": "application/json" },
   });
@@ -303,7 +303,42 @@ try {
     { role: "user", content: "Turn two" },
   ]]);
 
-  console.log("papaya-ai LangChain callback tests passed");
+  // Metadata transport is a separate guarantee from constructing valid HITL
+  // boundaries. These supplied event objects exercise carriage, not discovery.
+  const mapping = {
+    version: "1.0", targetSchema: "papaya.normalized-trace.v1",
+    trace: [{ from: "/metadata/sender@example.test", to: "/sessionId" }],
+    hitl: { from: "/metadata/approval_events", cardinality: "many", fields: [
+      { from: "/phase", to: "/phase" }, { from: "/approval_request_id", to: "/correlationId" },
+      { from: "/span_id", to: "/spanId" }, { from: "/at", to: "/occurredAt" },
+    ] },
+  };
+  for (const capture of ["full", "redacted", "metadata"] as const) {
+    const firstRequest = captured.length;
+    const metadataPapaya = Papaya.init({ apiKey: "papaya-test-token", endpoint: "https://papaya.example/ingest", capture });
+    const metadataCallback = new PapayaCallbackHandler(metadataPapaya, {
+      workflowKey: "approval_metadata_transport",
+      metadata: { "papaya.remap": mapping, thread_id: "shared-thread", "sender@example.test": "synthetic-session" },
+    });
+    for (const phase of ["pause", "resume"]) {
+      const events = [{ phase, approval_request_id: "approval-A", span_id: "supplied-boundary-span", at: "2026-10-13T17:00:00Z" }];
+      const runId = `${capture}-${phase}`;
+      metadataCallback.handleChainStart({ name: "MetadataCarrier" }, {}, runId, undefined, [], { approval_events: events });
+      metadataCallback.handleChainEnd({}, runId);
+    }
+    assert.equal((await metadataPapaya.flush()).status, "sent");
+    const traces = captured.slice(firstRequest).flatMap(request => request.body.traces as Array<Record<string, unknown>>);
+    assert.equal(traces.length, 2);
+    for (const [index, trace] of traces.entries()) {
+      const metadata = trace.metadata as Record<string, unknown>;
+      assert.deepEqual(metadata["papaya.remap"], mapping, "literal control key and nested JSON pointers survive serialization");
+      assert.equal(metadata.thread_id, "shared-thread");
+      assert.equal((metadata.approval_events as Array<{ phase: string }>)[0]!.phase, index ? "resume" : "pause");
+      const spans = trace.spans as Array<{ attributes: { metadata: Record<string, unknown> } }>;
+      assert.deepEqual(spans[0]!.attributes.metadata["papaya.remap"], mapping);
+    }
+  }
+  console.log("papaya-ai LangChain callback tests passed, including remap metadata in all three capture modes");
 } finally {
   globalThis.fetch = originalFetch;
 }

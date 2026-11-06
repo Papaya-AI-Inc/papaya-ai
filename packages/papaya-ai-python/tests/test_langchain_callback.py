@@ -14,6 +14,44 @@ from papaya_ai.integrations.langchain import PapayaCallbackHandler
 
 
 class PapayaLangChainCallbackTest(unittest.TestCase):
+    def test_remap_metadata_survives_callback_flush_in_every_capture_mode(self):
+        # This proves supplied metadata transport, not automatic approval/span discovery.
+        mapping = {
+            "version": "1.0", "targetSchema": "papaya.normalized-trace.v1",
+            "trace": [{"from": "/metadata/sender@example.test", "to": "/sessionId"}],
+            "hitl": {"from": "/metadata/approval_events", "cardinality": "many", "fields": [
+                {"from": "/phase", "to": "/phase"},
+                {"from": "/approval_request_id", "to": "/correlationId"},
+                {"from": "/span_id", "to": "/spanId"},
+                {"from": "/at", "to": "/occurredAt"},
+            ]},
+        }
+        for mode in ("full", "redacted", "metadata"):
+            with self.subTest(capture=mode):
+                captured = []
+
+                def transport(endpoint, headers, body):
+                    captured.append(json.loads(body.decode("utf-8")))
+                    return 202, '{"accepted":2,"rejected":0}'
+
+                papaya = Papaya.init(api_key="papaya-test-token", endpoint="https://papaya.example/ingest", capture=mode, transport=transport)
+                handler = PapayaCallbackHandler(papaya, workflow_key="approval_metadata_transport", metadata={
+                    "papaya.remap": mapping, "thread_id": "shared-thread", "sender@example.test": "synthetic-session",
+                })
+                for phase in ("pause", "resume"):
+                    run_id = f"{mode}-{phase}"
+                    events = [{"phase": phase, "approval_request_id": "approval-A", "span_id": "supplied-boundary-span", "at": "2026-10-13T17:00:00Z"}]
+                    handler.on_chain_start({"name": "MetadataCarrier"}, {}, run_id=run_id, metadata={"approval_events": events})
+                    handler.on_chain_end({}, run_id=run_id)
+                self.assertEqual(papaya.flush()["status"], "sent")
+                traces = [trace for batch in captured for trace in batch["traces"]]
+                self.assertEqual(len(traces), 2)
+                for index, trace in enumerate(traces):
+                    self.assertEqual(trace["metadata"]["papaya.remap"], mapping)
+                    self.assertEqual(trace["metadata"]["thread_id"], "shared-thread")
+                    self.assertEqual(trace["metadata"]["approval_events"][0]["phase"], "resume" if index else "pause")
+                    self.assertEqual(trace["spans"][0]["attributes"]["metadata"]["papaya.remap"], mapping)
+
     def test_callback_handler_exports_langchain_run_tree(self):
         captured = []
 

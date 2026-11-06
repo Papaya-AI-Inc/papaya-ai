@@ -112,6 +112,20 @@ await openai.chat.completions.create({
 await papaya.flush();
 ```
 
+## Report the code version
+
+Set `serviceVersion` in `Papaya.init()` to your deployed git commit SHA, or include it as `my-service@<sha>`; set `serviceName` to your service name. Papaya verifies the SHA in each connected repository before pinning source. Abbreviated SHAs (7–39 hex characters) must resolve in that repository. Papaya also resolves release labels through git tags in each connected repository: the whole label, its final `:`, `@`, or `/` token, then that token without one leading word prefix (for example `prod-v2.6.40` → `v2.6.40`). Push the matching git tag; annotated tags are peeled to their commit, and branches are never used for these lookups. Container image digests such as `sha256:...` are recorded as deployment versions, not git commits; unresolved versions use the repository's configured version policy with an explicit reason.
+
+For agents spanning multiple repositories, pass trace metadata through the wrapper or LangChain callback:
+
+```ts
+metadata: {
+  codeRevisions: [{ repo: "example/agent", commit: "<full 40-character git SHA>" }]
+}
+```
+
+Explicit repository revisions take precedence over `serviceVersion`. Report the version that produced the trace, not the version running when traces are uploaded.
+
 ## Fetch-Based Agent Loops
 
 Use `papaya.fetch()` when your agent loop calls providers directly. The wrapper calls the provider URL with your original request, strips the Papaya-only `papaya` field before the provider sees it, records header names instead of header values, and preserves streaming responses.
@@ -303,74 +317,6 @@ Convenience wrappers are available as `papaya.openai(...)`,
 `papaya.bedrock(...)`. Use these for direct SDK calls; use the callback handler
 for LangChain/LangGraph run trees.
 
-## Workflow Boundaries
-
-Papaya creates an implicit single-call run when no explicit run is active. Use `papaya.run()` when one business workflow spans several model calls, retries, retrievals, tools, guardrails, or provider SDKs.
-
-```ts
-await papaya.run({
-  workflowKey: "refund_agent",
-  workflowLabel: "Refund agent",
-  sessionId,
-  userId,
-}, async () => {
-  await openai.responses.create({ model: "gpt-4.1-mini", input });
-  await llmFetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "anthropic-version": "2023-06-01",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ model: "claude-3-5-sonnet-latest", messages }),
-    papaya: { provider: "anthropic" },
-  });
-});
-
-await papaya.flush();
-```
-
-## Capture Modes
-
-Configure capture with `Papaya.init({ capture })`.
-
-- `metadata`: records payload type and byte length only.
-- `redacted`: records payloads after local redaction. This is the default.
-- `full`: records payloads without local redaction. Use only when your Papaya token policy allows it.
-
-Redaction runs locally before export. The hosted ingest API also enforces the token capture policy before raw trace landing.
-
-## Flush Behavior
-
-The first package slice exports traces when you call `await papaya.flush()`. Provider calls are awaited normally, and Papaya export failures do not change provider results. When `debug: true` is enabled, export failures are logged to `console.warn`.
-
-Typical server usage:
-
-```ts
-try {
-  await handleAgentRequest();
-} finally {
-  await papaya.flush();
-}
-```
-
-## Configuration
-
-```ts
-const papaya = Papaya.init({
-  apiKey: process.env.PAPAYA_API_KEY,
-  endpoint: "https://papaya.fyi/api/v1/ingest/traces",
-  project: "support-agent",
-  environment: "production",
-  serviceName: "agent-api",
-  serviceVersion: process.env.GIT_SHA,
-  capture: "redacted",
-  debug: false,
-});
-```
-
-`apiKey` defaults to `PAPAYA_API_KEY` and then `PAPAYA_INGEST_TOKEN`. `endpoint` defaults to `https://papaya.fyi/api/v1/ingest/traces`.
-
 ## Attribute Remapping and Approval Stitching
 
 **Availability:** requires a Papaya endpoint with attribute-remapping v1 enabled.
@@ -455,6 +401,85 @@ provider-free LangGraph runs also test scalar pause/resume capture and local ser
 stitching. Server capture policies still apply. A fresh capture from your deployed
 callback remains necessary to verify its override and installed version.
 
+## Workflow Boundaries
+
+Papaya creates an implicit single-call run when no explicit run is active. Use `papaya.run()` when one business workflow spans several model calls, retries, retrievals, tools, guardrails, or provider SDKs.
+
+```ts
+await papaya.run({
+  workflowKey: "refund_agent",
+  workflowLabel: "Refund agent",
+  sessionId,
+  userId,
+}, async () => {
+  await openai.responses.create({ model: "gpt-4.1-mini", input });
+  await llmFetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "anthropic-version": "2023-06-01",
+      "x-api-key": process.env.ANTHROPIC_API_KEY!,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: "claude-3-5-sonnet-latest", messages }),
+    papaya: { provider: "anthropic" },
+  });
+});
+
+await papaya.flush();
+```
+
+To compare one customer-defined dimension in the Observability Groups tab, attach one name-value pair to each run. Reusing a name creates one selectable group namespace; changing the name creates another. Use stable values and never put secrets or URL query strings in a group.
+
+```ts
+await papaya.run({
+  workflowKey: "crawler",
+  group: { name: "url", value: "northfield.example.gov" },
+}, async () => {
+  // ...model and tool calls...
+});
+```
+
+## Capture Modes
+
+Configure capture with `Papaya.init({ capture })`.
+
+- `metadata`: records payload type and byte length only.
+- `redacted`: records payloads after local redaction. This is the default.
+- `full`: records payloads without local redaction. Use only when your Papaya token policy allows it.
+
+Redaction runs locally before export. The hosted ingest API also enforces the token capture policy before raw trace landing.
+
+## Flush Behavior
+
+The first package slice exports traces when you call `await papaya.flush()`. Provider calls are awaited normally, and Papaya export failures do not change provider results. When `debug: true` is enabled, export failures are logged to `console.warn`.
+
+Typical server usage:
+
+```ts
+try {
+  await handleAgentRequest();
+} finally {
+  await papaya.flush();
+}
+```
+
+## Configuration
+
+```ts
+const papaya = Papaya.init({
+  apiKey: process.env.PAPAYA_API_KEY,
+  endpoint: "https://papaya.fyi/api/v1/ingest/traces",
+  project: "support-agent",
+  environment: "production",
+  serviceName: "agent-api",
+  serviceVersion: process.env.GIT_SHA,
+  capture: "redacted",
+  debug: false,
+});
+```
+
+`apiKey` defaults to `PAPAYA_API_KEY` and then `PAPAYA_INGEST_TOKEN`. `endpoint` defaults to `https://papaya.fyi/api/v1/ingest/traces`.
+
 ## Applied Recommendations
 
 Every Papaya recommendation has an id of the form `agfind-<digits>-<hex>`. When your coding agent implements a recommendation, it appends that id to a list in your application config. Pass the list to `Papaya.init` and Papaya marks the recommendation as implemented.
@@ -497,3 +522,35 @@ npm pack --dry-run
 ```
 
 Before publishing, follow `RELEASE.md`.
+
+
+## Reliable export in 0.1.5
+
+Version 0.1.5 adds bounded in-memory delivery, fair retries, resumable multipart uploads and provider usage fidelity to both SDKs. The TypeScript SDK uses Node built-ins and adds no runtime dependency.
+
+```ts
+const papaya = Papaya.init({
+  apiKey: process.env.PAPAYA_API_KEY,
+  multipart: true,            // Explicit opt-in; requires server multipart capability.
+  requestTimeoutMs: 10_000,
+  flushTimeoutMs: 10_000,
+});
+
+// Capture normally, then freeze and admit completed traces for delivery.
+const result = await papaya.flush();
+const state = papaya.exportStatus();
+// During shutdown, drain within a deadline and stop new capture/retry requests.
+const closing = await papaya.close(5_000);
+```
+
+Retries retain identical batch bytes and IDs, respect exponential backoff and `Retry-After`, and allow healthy batches past delayed failures. A 401/403 pauses sends until `papaya.configureExport({ apiKey: replacementKey })`. Terminal failures, invalid/partial acceptance and exhausted retries retain their payloads in the bounded pending queue; they are visible through receipts and counters. There is no automatic eviction. Successful legacy responses retain the existing `status`, `traceCount`, `endpoint`, `httpStatus` and `responseText` fields, with additional delivery accounting.
+
+`flush(timeoutMs, signal?)` waits for one attempt per captured target and never bypasses retry delays. Its deadline or an aborted wait does not release an in-flight request or start a duplicate attempt. `close(timeoutMs)` drains completed capture backlogs within the deadline, then stops new requests. It reports unfinished, queued, retrying and in-flight work. JavaScript promises provide the asynchronous lifecycle, so Python's thread/executor and separate `aflush`/`aclose` APIs are unnecessary here.
+
+Defaults: 64 pending batches / 64 MiB; 128 active or completed-but-unadmitted traces; 16 MiB active capture and 8 MiB per trace (64 MiB / 32 MiB with multipart); eight attempts within five minutes; 250 ms initial backoff, 30 s maximum, 20% jitter. Options use `maxPendingBatches`, `maxPendingBytes`, `maxActiveTraces`, `maxActiveBytes`, `maxTraceBytes`, `maxAttempts`, `maxRetryAgeMs`, `retryBaseMs`, `retryMaxMs`, `retryJitter`, and `diagnosticLimit` (128 by default). Manual capture methods raise `PapayaCaptureError` on admission/serialization failure. Provider wrappers preserve application arguments, return values and original exceptions while recording telemetry failures. Limits never trim source content to make an upload fit.
+
+Multipart sends each frozen batch through config → create/status → checksum-verified serial parts → complete → validated landed receipt. It supports up to the server's advertised total (at most 32 MiB). A lost create reply repeats the same declaration; a lost part/completion reply reads status and skips verified work. An ambiguous session remains bound to its destination and credential. Unsupported multipart, conflicting receipts or configuration changes fail explicitly; there is no legacy-transport fallback. `multipartIdleTtlSeconds` optionally requests a supported 60–3600 second idle TTL.
+
+Provider usage preserves nested cache/reasoning fields and reported cost, including zero, without adding duplicate observations or using unrelated call/content totals. Compatible gateways can use `papaya.openai(client, { provider: "openrouter" })` or a per-call `papaya: { provider: "openrouter" }`; the override changes telemetry only. Requested and returned model labels remain distinct. LangChain retains actual tool names and usage from its recognized response locations.
+
+The SDK has no durable local outbox: a producer exit can lose unaccepted memory. Check delivery receipts and drain completed traces before shutdown. Memory limits and retry deadlines remain finite; server availability is required for acceptance.

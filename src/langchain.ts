@@ -1,3 +1,4 @@
+import { papayaUsageFromResult, papayaModelFromResult } from "./usage.js";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 
 import {
@@ -320,72 +321,20 @@ const serializedName = (serialized: Serialized, fallback: string): string => {
 const numberValue = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
-const usageFromRecord = (value: unknown): Record<string, number | string | undefined> | undefined => {
-  if (!isRecord(value)) return undefined;
-  const usage = isRecord(value.usage) ? value.usage
-    : isRecord(value.token_usage) ? value.token_usage
-      : isRecord(value.usage_metadata) ? value.usage_metadata
-        : isRecord(value.usageMetadata) ? value.usageMetadata
-          : value;
-  if (!isRecord(usage)) return undefined;
-  const hasUsageKeys = [
-    "input_tokens", "prompt_tokens", "inputTokens", "promptTokenCount",
-    "output_tokens", "completion_tokens", "outputTokens", "candidatesTokenCount",
-    "total_tokens", "totalTokens", "totalTokenCount",
-  ].some((key) => key in usage);
-  if (!hasUsageKeys) return undefined;
-  const inputTokens = numberValue(usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokenCount);
-  const outputTokens = numberValue(usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.candidatesTokenCount);
-  const inputDetails = isRecord(usage.input_token_details) ? usage.input_token_details
-    : isRecord(usage.inputTokenDetails) ? usage.inputTokenDetails
-      : undefined;
-  const outputDetails = isRecord(usage.output_token_details) ? usage.output_token_details
-    : isRecord(usage.outputTokenDetails) ? usage.outputTokenDetails
-      : undefined;
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: numberValue(usage.total_tokens ?? usage.totalTokens ?? usage.totalTokenCount) ?? (inputTokens ?? 0) + (outputTokens ?? 0),
-    cacheReadInputTokens: numberValue(
-      usage.cache_read_input_tokens ??
-      usage.cached_input_tokens ??
-      usage.cacheReadInputTokens ??
-      usage.cached_content_token_count ??
-      inputDetails?.cache_read ??
-      inputDetails?.cacheRead,
-    ),
-    cacheCreationInputTokens: numberValue(
-      usage.cache_creation_input_tokens ??
-      usage.cacheCreationInputTokens ??
-      inputDetails?.cache_creation ??
-      inputDetails?.cacheCreation,
-    ),
-    reasoningTokens: numberValue(
-      usage.reasoning_tokens ??
-      usage.reasoningTokens ??
-      outputDetails?.reasoning,
-    ),
-    costUsd: numberValue(usage.cost_usd ?? usage.costUsd),
-    pricingSource: usage.cost_usd || usage.costUsd ? "provider" : undefined,
-  };
+// LangChain puts one call's result in llmOutput and its first generation message.
+// Read these protocol locations only; prompt/tool content is never a usage source.
+const firstGenerationMessage = (value: unknown): unknown => {
+  if (!isRecord(value) || !Array.isArray(value.generations)) return undefined;
+  const first = value.generations[0];
+  const generation = Array.isArray(first) ? first[0] : first;
+  return isRecord(generation) ? generation.message ?? generation : undefined;
 };
-
-const usageFromNested = (value: unknown): Record<string, number | string | undefined> | undefined => {
-  const direct = usageFromRecord(value);
-  if (direct) return direct;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const usage = usageFromNested(item);
-      if (usage) return usage;
-    }
-  }
-  if (isRecord(value)) {
-    for (const item of Object.values(value)) {
-      const usage = usageFromNested(item);
-      if (usage) return usage;
-    }
-  }
-  return undefined;
+const usageFromNested = (value: unknown, extract: (v: unknown) => ReturnType<typeof papayaUsageFromResult>) => {
+  const primary = extract(value);
+  const message = extract(firstGenerationMessage(value));
+  if (!primary) return message;
+  if (!message) return primary;
+  return { ...message, ...primary };
 };
 
 const modelLabel = (serialized: Serialized, extraParams?: Record<string, unknown>, metadata?: Record<string, unknown>): string | undefined => {
@@ -395,24 +344,8 @@ const modelLabel = (serialized: Serialized, extraParams?: Record<string, unknown
   return serializedName(serialized, "");
 };
 
-const modelFromResponse = (value: unknown): string | undefined => {
-  if (!isRecord(value)) return undefined;
-  const candidates = [
-    value.model,
-    value.model_name,
-    value.modelName,
-    isRecord(value.llmOutput) ? value.llmOutput.model_name ?? value.llmOutput.model : undefined,
-    isRecord(value.response_metadata) ? value.response_metadata.model_name ?? value.response_metadata.model : undefined,
-    isRecord(value.responseMetadata) ? value.responseMetadata.model_name ?? value.responseMetadata.model : undefined,
-  ];
-  const direct = candidates.find((item) => typeof item === "string" && item);
-  if (typeof direct === "string") return direct;
-  for (const item of Object.values(value)) {
-    const nested = modelFromResponse(item);
-    if (nested) return nested;
-  }
-  return undefined;
-};
+const modelFromResponse = (value: unknown): string | undefined =>
+  papayaModelFromResult(value) ?? papayaModelFromResult(firstGenerationMessage(value));
 
 const responseAttributesFromResponse = (value: unknown): Record<string, unknown> | undefined => {
   const serialized = jsonable(value);
@@ -702,7 +635,7 @@ export class PapayaCallbackHandler extends BaseCallbackHandler {
       kind: "llm",
       inputValue: prompts,
       metadata,
-      modelRef: { provider: "langchain", requested: model },
+      modelRef: { provider: presentText(metadata?.ls_provider) ?? "langchain", requested: model },
     });
   }
 
@@ -717,14 +650,14 @@ export class PapayaCallbackHandler extends BaseCallbackHandler {
       kind: "llm",
       inputPayload: capture.inputPayload,
       metadata,
-      modelRef: { provider: "langchain", requested: model },
+      modelRef: { provider: presentText(metadata?.ls_provider) ?? "langchain", requested: model },
       llm: capture.llm,
     });
   }
 
   handleLLMEnd(output: unknown, runId: string): void {
     if (this.options.captureLLM === false) return;
-    const usage = usageFromNested(output);
+    const usage = usageFromNested(output, value => this.papaya.captureUsage(value));
     const modelUsed = modelFromResponse(output);
     const responseAttributes = responseAttributesFromResponse(output);
     const compactOutput = generationsFromResponse(output);

@@ -28,7 +28,11 @@ class PapayaCoreTest(unittest.TestCase):
             transport=transport,
         )
 
-        with papaya.run({"workflowKey": "checkout", "sessionId": "session-1"}) as trace:
+        with papaya.run({
+            "workflowKey": "checkout",
+            "sessionId": "session-1",
+            "group": {"name": "url", "value": "northfield.example.gov"},
+        }) as trace:
             span = papaya.start_span(
                 trace=trace,
                 name="openai.chat",
@@ -60,6 +64,7 @@ class PapayaCoreTest(unittest.TestCase):
         self.assertIn("[redacted-email]", exported)
         self.assertIn("Bearer [redacted-token]", exported)
         self.assertEqual(body["traces"][0]["workflowKey"], "checkout")
+        self.assertEqual(body["traces"][0]["group"], {"name": "url", "value": "northfield.example.gov"})
         llm_span = next(span for span in body["traces"][0]["spans"] if span["kind"] == "llm")
         self.assertEqual(llm_span["usage"]["inputTokens"], 5)
 
@@ -72,8 +77,13 @@ class PapayaCoreTest(unittest.TestCase):
         first = papaya.flush()
         second = papaya.flush()
 
-        self.assertEqual(first, {"status": "skipped", "traceCount": 1, "reason": "missing_api_key"})
-        self.assertEqual(second, {"status": "skipped", "traceCount": 1, "reason": "missing_api_key"})
+        for result in (first, second):
+            self.assertEqual(
+                {key: result[key] for key in ("status", "traceCount", "reason")},
+                {"status": "skipped", "traceCount": 1, "reason": "missing_api_key"},
+            )
+            self.assertEqual(result["sent"]["traces"], 0)
+            self.assertEqual(result["queued"]["traces"], 1)
 
     def test_failed_flush_keeps_completed_trace_for_retry(self):
         calls = []
@@ -88,6 +98,9 @@ class PapayaCoreTest(unittest.TestCase):
             api_key="papaya-test-token",
             endpoint="https://papaya.example/api/v1/ingest/traces",
             transport=transport,
+            retry_base=0.01,
+            retry_max=0.01,
+            retry_jitter=0,
         )
 
         with papaya.run({"workflowKey": "retryable"}):
@@ -104,7 +117,7 @@ class PapayaCoreTest(unittest.TestCase):
         self.assertEqual(calls[0], calls[1])
         self.assertEqual(calls[0]["batchId"], calls[1]["batchId"])
 
-    def test_413_splits_multi_trace_batches_without_changing_trace_ids(self):
+    def test_413_retains_multi_trace_batch_without_splitting_or_changing_trace_ids(self):
         calls = []
 
         def transport(endpoint, headers, body):
@@ -129,19 +142,21 @@ class PapayaCoreTest(unittest.TestCase):
 
         result = papaya.flush()
 
-        self.assertEqual(result["status"], "sent")
+        self.assertNotEqual(result["status"], "sent")
         self.assertEqual(result["traceCount"], 3)
+        self.assertEqual(result["sent"]["traces"], 0)
+        self.assertEqual(result["terminalFailed"]["traces"], 3)
         self.assertEqual(
             [call["traceIds"] for call in calls],
-            [
-                ["trace-one", "trace-two", "trace-three"],
-                ["trace-one", "trace-two"],
-                ["trace-one"],
-                ["trace-two"],
-                ["trace-three"],
-            ],
+            [["trace-one", "trace-two", "trace-three"]],
         )
-        self.assertEqual(len({call["batchId"] for call in calls}), len(calls))
+        retained = list(papaya._exporter._batches)
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(json.loads(retained[0].body)["batchId"], calls[0]["batchId"])
+        self.assertEqual(
+            [trace["traceId"] for trace in json.loads(retained[0].body)["traces"]],
+            ["trace-one", "trace-two", "trace-three"],
+        )
 
     def test_exact_byte_packing_keeps_batches_under_target(self):
         calls = []

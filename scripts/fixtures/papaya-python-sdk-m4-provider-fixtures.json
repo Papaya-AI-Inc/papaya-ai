@@ -1,0 +1,36 @@
+{
+  "schema": "papaya-m4-provider-fixtures/v1",
+  "providers": [
+    {
+      "case": "openai_responses", "provider": "openai", "wrapper": "responses", "modelId": "gpt-4o",
+      "result": {"id": "petavue-m4-responses", "model": "gpt-4o", "usage": {"input_tokens": 120, "output_tokens": 30, "total_tokens": 160}, "response": {"metadata": {"usage": {"input_tokens_details": {"cached_tokens": 20}, "output_tokens_details": {"reasoning_tokens": 7}, "cost_usd": 0.0123}}}},
+      "expected": {"inputTokens": 120, "outputTokens": 30, "totalTokens": 160, "cacheReadInputTokens": 20, "reasoningTokens": 7, "costUsd": 0.0123}
+    },
+    {
+      "case": "openai_chat", "provider": "openai", "wrapper": "chat", "modelId": "gpt-4o",
+      "result": {"id": "petavue-m4-chat", "model": "gpt-4o", "usage": {"prompt_tokens": 90, "completion_tokens": 20, "total_tokens": 114}, "body": {"usage": {"prompt_tokens_details": {"cached_tokens": 30}, "completion_tokens_details": {"reasoning_tokens": 6}, "cost_usd": 0.0098}}},
+      "expected": {"inputTokens": 90, "outputTokens": 20, "totalTokens": 114, "cacheReadInputTokens": 30, "reasoningTokens": 6, "costUsd": 0.0098}
+    },
+    {
+      "case": "anthropic", "provider": "claude", "wrapper": "anthropic", "modelId": "claude-sonnet-4-20250514",
+      "result": {"id": "petavue-m4-anthropic", "model": "claude-sonnet-4-20250514", "usage": {"input_tokens": 40, "output_tokens": 10, "total_tokens": 50}, "response_metadata": {"usage": {"cache_read_input_tokens": 11, "cache_creation_input_tokens": 7, "cost_usd": 0.0044}}},
+      "expected": {"inputTokens": 40, "outputTokens": 10, "totalTokens": 50, "cacheReadInputTokens": 11, "cacheCreationInputTokens": 7, "costUsd": 0.0044}
+    },
+    {
+      "case": "gemini", "provider": "gemini", "wrapper": "gemini", "modelId": "gemini-2.5-pro",
+      "result": {"id": "petavue-m4-gemini", "model": "gemini-2.5-pro", "usageMetadata": {"promptTokenCount": 180, "candidatesTokenCount": 35, "totalTokenCount": 230}, "response": {"usageMetadata": {"cachedContentTokenCount": 44, "thoughtsTokenCount": 9, "cost_usd": 0.0067}}},
+      "expected": {"inputTokens": 180, "outputTokens": 35, "totalTokens": 230, "cacheReadInputTokens": 44, "reasoningTokens": 9, "costUsd": 0.0067}
+    },
+    {
+      "case": "openrouter", "provider": "openrouter", "wrapper": "openrouter", "modelId": "openai/gpt-4o",
+      "result": {"id": "petavue-m4-openrouter", "model": "openai/gpt-4o", "usage": {"prompt_tokens": 50, "completion_tokens": 12, "total_tokens": 62}, "data": {"usage": {"cost": 0.007, "upstream_inference_cost": 0.003}}},
+      "expected": {"inputTokens": 50, "outputTokens": 12, "totalTokens": 62, "costUsd": 0.007}
+    }
+  ],
+  "lookup": [
+    {"name": "exact", "modelId": "gpt-4o", "lookupClass": "exact", "inputTokens": 1500, "outputTokens": 250, "totalTokens": 1750},
+    {"name": "partial", "modelId": "gpt-4o-2099-12-31", "lookupClass": "partial", "inputTokens": 900, "outputTokens": 120, "totalTokens": 1020},
+    {"name": "distinct_tier", "modelId": "gpt-4o-unrelated-tier", "lookupClass": "generic", "inputTokens": 700, "outputTokens": 90, "totalTokens": 790},
+    {"name": "unknown", "modelId": "petavue-synthetic-unknown-model", "lookupClass": "generic", "inputTokens": 1100, "outputTokens": 140, "totalTokens": 1240}
+  ]
+}
