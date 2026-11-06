@@ -100,7 +100,13 @@ try {
   assert.equal(providerRequest.authorization, "Bearer should-not-reach-papaya");
 
   assert.equal(captured.length, 1);
-  assert.partialDeepStrictEqual(flushResult, {
+  assert.deepEqual({
+    status: flushResult.status,
+    traceCount: flushResult.traceCount,
+    endpoint: flushResult.endpoint,
+    httpStatus: flushResult.httpStatus,
+    responseText: flushResult.responseText,
+  }, {
     status: "sent",
     traceCount: 1,
     endpoint: "https://papaya.example/api/v1/ingest/traces",
@@ -169,7 +175,11 @@ try {
     messages: [{ role: "user", content: "hello" }],
   });
   const missingKeyFlush = await missingKeyPapaya.flush();
-  assert.partialDeepStrictEqual(missingKeyFlush, {
+  assert.deepEqual({
+    status: missingKeyFlush.status,
+    traceCount: missingKeyFlush.traceCount,
+    reason: missingKeyFlush.reason,
+  }, {
     status: "skipped",
     traceCount: 1,
     reason: "missing_api_key",
